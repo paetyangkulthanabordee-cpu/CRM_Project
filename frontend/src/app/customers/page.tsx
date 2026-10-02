@@ -3,22 +3,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
+import { useRouter } from "next/navigation";
+
 import { z } from "zod";
 
 import AddIcon from "@mui/icons-material/Add";
 import CloseIcon from "@mui/icons-material/Close";
+import DeleteIcon from "@mui/icons-material/Delete";
 import DownloadIcon from "@mui/icons-material/Download";
-import GridViewIcon from "@mui/icons-material/GridView";
-import InboxIcon from "@mui/icons-material/Inbox";
-import InsertChartIcon from "@mui/icons-material/InsertChart";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
-import TableViewIcon from "@mui/icons-material/TableView";
-import ViewKanbanIcon from "@mui/icons-material/ViewKanban";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import Alert from "@mui/material/Alert";
+import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import ButtonGroup from "@mui/material/ButtonGroup";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
@@ -27,7 +27,6 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
-import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import MenuItem from "@mui/material/MenuItem";
@@ -43,34 +42,24 @@ import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
-import CustomerBoard from "@/components/CustomerBoard";
+import CustomerDetailDialog, {
+  formatBaht,
+  formatDate,
+  initials,
+} from "@/components/CustomerDetailDialog";
 import DashboardSidebar from "@/components/DashboardSidebar";
-
-import { useRouter } from "next/navigation";
 
 import { api, getErrorMessage } from "@/lib/api";
 
 import { useSession } from "@/lib/useSession";
 
-import {
-  CUSTOMER_COLUMNS,
-  CUSTOMER_STATUSES,
-  STATUS_CHIP_STYLES,
-  STATUS_LABELS,
+import type {
+  Customer,
+  DocumentItem,
+  PipelineStage,
 } from "@/lib/types";
 
 import type { Permissions } from "@/lib/auth";
-
-import type {
-  Customer,
-  CustomerStatus,
-} from "@/lib/types";
-
-type ViewMode =
-  | "kanban"
-  | "table"
-  | "grid"
-  | "summary";
 
 type DateFilter =
   | "all"
@@ -88,21 +77,6 @@ const DATE_OPTIONS: {
   { value: "30d", label: "30 วันที่ผ่านมา" },
 ];
 
-const customerSchema = z.object({
-  companyName: z
-    .string()
-    .trim()
-    .min(1, "กรุณากรอกชื่อบริษัท"),
-
-  email: z
-    .string()
-    .trim()
-    .email("รูปแบบ Email ไม่ถูกต้อง")
-    .or(z.literal("")),
-
-  phone: z.string().trim(),
-});
-
 interface CustomerForm {
   companyName: string;
   email: string;
@@ -114,62 +88,95 @@ const emptyForm: CustomerForm = {
   companyName: "",
   email: "",
   phone: "",
-  status: "lead",
+  status: "",
 };
 
-const statusColors: Record<CustomerStatus, string> =
-  Object.fromEntries(
-    CUSTOMER_COLUMNS.map((column) => [
-      column.status,
-      column.color,
-    ]),
-  ) as Record<CustomerStatus, string>;
+const customerSchema = z.object({
+  companyName: z
+    .string()
+    .min(1, "กรุณากรอกชื่อบริษัท"),
 
-function downloadCsv(rows: Customer[]) {
-  const header = [
-    "ID",
-    "Company",
-    "Email",
-    "Phone",
-    "Status",
-    "Created",
-  ];
+  email: z
+    .string()
+    .refine(
+      (value) =>
+        value.trim() === "" ||
+        z.string().email().safeParse(value).success,
+      "รูปแบบ Email ไม่ถูกต้อง",
+    ),
 
-  const body = rows.map((customer) => [
-    customer.customerId,
-    customer.companyName,
-    customer.email ?? "",
-    customer.phone ?? "",
-    STATUS_LABELS[customer.status],
-    new Date(
-      customer.createdAt,
-    ).toLocaleDateString("th-TH"),
-  ]);
+  phone: z.string(),
 
-  const escape = (cell: string | number) =>
-    `"${String(cell).replace(/"/g, '""')}"`;
+  status: z.string().min(1, "กรุณาเลือกสถานะ"),
+});
 
-  const csv = [header, ...body]
-    .map((row) => row.map(escape).join(","))
-    .join("\r\n");
+interface DocSummary {
+  quotation: { count: number; total: number };
+  invoice: { count: number; total: number };
+  receipt: { count: number; total: number };
+  outstanding: number;
+}
 
-  const blob = new Blob(["\uFEFF" + csv], {
-    type: "text/csv;charset=utf-8;",
-  });
+function emptySummary(): DocSummary {
+  return {
+    quotation: { count: 0, total: 0 },
+    invoice: { count: 0, total: 0 },
+    receipt: { count: 0, total: 0 },
+    outstanding: 0,
+  };
+}
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+function summarizeDocs(
+  docs: DocumentItem[],
+): Record<number, DocSummary> {
+  const result: Record<number, DocSummary> = {};
 
-  link.href = url;
-  link.download = `customers-${new Date()
-    .toISOString()
-    .slice(0, 10)}.csv`;
+  for (const doc of docs) {
+    const customerId = doc.customerId;
 
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+    if (customerId === null) {
+      continue;
+    }
 
-  URL.revokeObjectURL(url);
+    const summary = result[customerId] ?? emptySummary();
+
+    if (
+      doc.status === "cancelled" ||
+      doc.status === "void"
+    ) {
+      continue;
+    }
+
+    if (doc.docType === "quotation") {
+      summary.quotation.count += 1;
+      summary.quotation.total += doc.amount;
+    }
+
+    if (doc.docType === "invoice") {
+      summary.invoice.count += 1;
+      summary.invoice.total += doc.amount;
+    }
+
+    if (doc.docType === "receipt") {
+      summary.receipt.count += 1;
+      summary.receipt.total += doc.amount;
+    }
+
+    result[customerId] = summary;
+  }
+
+  for (const [customerId, summary] of Object.entries(
+    result,
+  )) {
+    summary.outstanding = Math.max(
+      summary.invoice.total - summary.receipt.total,
+      0,
+    );
+
+    result[Number(customerId)] = summary;
+  }
+
+  return result;
 }
 
 export default function CustomersPage() {
@@ -179,23 +186,28 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<
     Customer[]
   >([]);
+  const [stages, setStages] = useState<
+    PipelineStage[]
+  >([]);
+  const [docSummary, setDocSummary] =
+    useState<Record<number, DocSummary>>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [view, setView] =
-    useState<ViewMode>("kanban");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
     useState("");
   const [dateFilter, setDateFilter] =
     useState<DateFilter>("all");
 
+  const [detailTarget, setDetailTarget] =
+    useState<Customer | null>(null);
+
   const [dialogOpen, setDialogOpen] =
     useState(false);
   const [editing, setEditing] =
     useState<Customer | null>(null);
-
   const [form, setForm] =
     useState<CustomerForm>(emptyForm);
   const [formError, setFormError] = useState("");
@@ -218,15 +230,36 @@ export default function CustomersPage() {
     [],
   );
 
-  const loadCustomers = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      const response =
-        await api.get<Customer[]>("/customers");
+      const [customersRes, stagesRes, docsRes] =
+        await Promise.all([
+          api.get<Customer[]>("/customers"),
+          api.get<PipelineStage[]>(
+            "/pipeline-stages",
+          ),
+          api.get<DocumentItem[]>("/documents"),
+        ]);
 
-      setCustomers(response.data);
+      setCustomers(customersRes.data);
+      setStages(stagesRes.data);
+      setDocSummary(
+        summarizeDocs(docsRes.data),
+      );
+
+      if (stagesRes.data.length > 0) {
+        setForm((current) =>
+          current.status
+            ? current
+            : {
+                ...current,
+                status: stagesRes.data[0].stageKey,
+              },
+        );
+      }
     } catch (err) {
       setError(
         getErrorMessage(
@@ -249,12 +282,12 @@ export default function CustomersPage() {
       return;
     }
 
-    void Promise.resolve().then(() => loadCustomers());
-  }, [ready, user, router, loadCustomers]);
+    void Promise.resolve().then(() => loadAll());
+  }, [ready, user, router, loadAll]);
 
   /* =====================================================
      FILTER
-  ====================================================== */
+     ====================================================== */
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -269,8 +302,7 @@ export default function CustomersPage() {
             now.getDate(),
           ).getTime()
         : dateFilter === "7d"
-          ? now.getTime() -
-            7 * 24 * 60 * 60 * 1000
+          ? now.getTime() - 7 * 24 * 60 * 60 * 1000
           : dateFilter === "30d"
             ? now.getTime() -
               30 * 24 * 60 * 60 * 1000
@@ -283,6 +315,7 @@ export default function CustomersPage() {
           customer.companyName,
           customer.email,
           customer.phone,
+          customer.assignedUser?.name,
         ].some((value) =>
           (value ?? "")
             .toLowerCase()
@@ -305,89 +338,68 @@ export default function CustomersPage() {
         matchesDate
       );
     });
-  }, [customers, search, statusFilter, dateFilter]);
+  }, [
+    customers,
+    search,
+    statusFilter,
+    dateFilter,
+  ]);
 
-  const statusCounts = CUSTOMER_STATUSES.map(
-    (status) => ({
-      status,
-      count: filtered.filter(
-        (customer) => customer.status === status,
-      ).length,
-    }),
-  );
+  const hasFilter =
+    Boolean(search.trim()) ||
+    Boolean(statusFilter) ||
+    dateFilter !== "all";
 
-  const summaryTotal = filtered.length;
-
-  const wonCount =
-    statusCounts.find(
-      (item) => item.status === "payment",
-    )?.count ?? 0;
-
-  const lostCount =
-    statusCounts.find(
-      (item) =>
-        item.status === "not_interested",
-    )?.count ?? 0;
-
-  const closedCount = wonCount + lostCount;
-
-  const winRate =
-    closedCount === 0
-      ? 0
-      : Math.round((wonCount / closedCount) * 100);
-
-  /* =====================================================
-     MOVE (DRAG & DROP)
-  ====================================================== */
-
-  async function handleMove(
-    customerId: number,
-    status: string,
-  ) {
-    const previous = customers;
-
-    setCustomers((current) =>
-      current.map((customer) =>
-        customer.customerId === customerId
-          ? { ...customer, status }
-          : customer,
-      ),
-    );
-
-    try {
-      await api.patch(
-        `/customers/${customerId}`,
-        { status },
-      );
-
-      showNotice(
-        `เปลี่ยนสถานะเป็น ${
-          STATUS_LABELS[status]
-        } แล้ว`,
-        "success",
-      );
-    } catch (err) {
-      setCustomers(previous);
-
-      showNotice(
-        getErrorMessage(
-          err,
-          "ไม่สามารถเปลี่ยนสถานะได้",
-        ),
-        "error",
-      );
-    }
+  function resetFilters() {
+    setSearch("");
+    setStatusFilter("");
+    setDateFilter("all");
   }
 
-  /* =====================================================
-     CREATE / EDIT
-  ====================================================== */
+  const stageByKey = useMemo(() => {
+    const map: Record<string, PipelineStage> =
+      {};
 
-  function openCreate(
-    status: CustomerStatus = "lead",
-  ) {
+    for (const stage of stages) {
+      map[stage.stageKey] = stage;
+    }
+
+    return map;
+  }, [stages]);
+
+  const totals = useMemo(() => {
+    let quotation = 0;
+    let invoiced = 0;
+    let received = 0;
+    let outstanding = 0;
+
+    for (const customer of filtered) {
+      const summary =
+        docSummary[customer.customerId];
+
+      if (!summary) {
+        continue;
+      }
+
+      quotation += summary.quotation.total;
+      invoiced += summary.invoice.total;
+      received += summary.receipt.total;
+      outstanding += summary.outstanding;
+    }
+
+    return { quotation, invoiced, received, outstanding };
+  }, [filtered, docSummary]);
+
+  /* =====================================================
+     ACTIONS
+     ====================================================== */
+
+  function openCreate() {
     setEditing(null);
-    setForm({ ...emptyForm, status });
+    setForm({
+      ...emptyForm,
+      status: stages[0]?.stageKey ?? "",
+    });
     setFormError("");
     setDialogOpen(true);
   }
@@ -424,10 +436,11 @@ export default function CustomersPage() {
 
     try {
       const payload = {
-        companyName: result.data.companyName,
-        email: result.data.email || undefined,
-        phone: result.data.phone || undefined,
-        status: form.status,
+        companyName:
+          result.data.companyName.trim(),
+        email: result.data.email.trim() || null,
+        phone: result.data.phone.trim() || null,
+        status: result.data.status,
       };
 
       if (editing) {
@@ -435,35 +448,33 @@ export default function CustomersPage() {
           `/customers/${editing.customerId}`,
           payload,
         );
+
         showNotice(
-          "อัปเดตลูกค้าเรียบร้อยแล้ว",
+          "อัปเดตข้อมูลลูกค้าเรียบร้อยแล้ว",
           "success",
         );
       } else {
         await api.post("/customers", payload);
+
         showNotice(
-          "เพิ่มลูกค้าเรียบร้อยแล้ว",
+          "เพิ่มลูกค้าใหม่เรียบร้อยแล้ว",
           "success",
         );
       }
 
       setDialogOpen(false);
-      await loadCustomers();
+      await loadAll();
     } catch (err) {
       setFormError(
         getErrorMessage(
           err,
-          "ไม่สามารถบันทึกข้อมูลได้",
+          "ไม่สามารถบันทึกข้อมูลลูกค้าได้",
         ),
       );
     } finally {
       setSaving(false);
     }
   }
-
-  /* =====================================================
-     DELETE
-  ====================================================== */
 
   async function handleDelete() {
     if (!deleteTarget) {
@@ -482,7 +493,7 @@ export default function CustomersPage() {
         "success",
       );
       setDeleteTarget(null);
-      await loadCustomers();
+      await loadAll();
     } catch (err) {
       showNotice(
         getErrorMessage(
@@ -497,24 +508,65 @@ export default function CustomersPage() {
     }
   }
 
-  /* =====================================================
-     FILTER RESET
-  ====================================================== */
+  function downloadCsv() {
+    const header = [
+      "Company",
+      "Email",
+      "Phone",
+      "Sales",
+      "Stage",
+      "Quotation",
+      "Invoice",
+      "Receipt",
+      "Created",
+    ];
 
-  const hasFilter =
-    Boolean(search.trim()) ||
-    statusFilter !== "" ||
-    dateFilter !== "all";
+    const body = filtered.map((customer) => {
+      const summary =
+        docSummary[customer.customerId];
 
-  function resetFilters() {
-    setSearch("");
-    setStatusFilter("");
-    setDateFilter("all");
+      return [
+        customer.companyName,
+        customer.email ?? "",
+        customer.phone ?? "",
+        customer.assignedUser?.name ?? "",
+        stageByKey[customer.status]?.label ??
+          customer.status,
+        summary?.quotation.total ?? 0,
+        summary?.invoice.total ?? 0,
+        summary?.receipt.total ?? 0,
+        formatDate(customer.createdAt),
+      ];
+    });
+
+    const csv = [header, ...body]
+      .map((row) =>
+        row
+          .map((cell) =>
+            `"${String(cell).replace(/"/g, '""')}"`,
+          )
+          .join(","),
+      )
+      .join("\n");
+
+    const blob = new Blob(
+      ["\uFEFF" + csv],
+      { type: "text/csv;charset=utf-8;" },
+    );
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = "customers.csv";
+    link.click();
+
+    URL.revokeObjectURL(url);
   }
 
   /* =====================================================
      RENDER
-  ====================================================== */
+     ====================================================== */
 
   if (!user) {
     return (
@@ -532,7 +584,7 @@ export default function CustomersPage() {
     );
   }
 
-  const customerPermissions: Permissions =
+  const fallbackPermissions: Permissions =
     permissions ?? {
       dashboard: true,
       customers: true,
@@ -554,7 +606,7 @@ export default function CustomersPage() {
     >
       <DashboardSidebar
         user={user}
-        permissions={customerPermissions}
+        permissions={fallbackPermissions}
       />
 
       <Box
@@ -574,142 +626,76 @@ export default function CustomersPage() {
             mb: 3,
             display: "flex",
             justifyContent: "space-between",
-            alignItems: "center",
+            alignItems: "flex-start",
             gap: 2,
             flexWrap: "wrap",
           }}
         >
-          <Box sx={{ minWidth: 0 }}>
+          <Box>
+            <Typography
+              sx={{
+                fontWeight: 800,
+                fontSize: 13,
+                letterSpacing: 1.2,
+                color: "#2563eb",
+              }}
+            >
+              CUSTOMER DATABASE
+            </Typography>
+
             <Typography
               component="h1"
               variant="h4"
               sx={{
+                mt: 0.5,
                 fontWeight: 800,
                 color: "#0f172a",
                 lineHeight: 1.2,
               }}
             >
-              Customers
+              ลูกค้าทั้งหมด
             </Typography>
 
             <Typography
-              component="div"
               variant="body2"
-              sx={{ mt: 0.5, color: "#64748b" }}
+              sx={{
+                mt: 0.5,
+                color: "#64748b",
+              }}
             >
-              จัดการลูกค้าและการขายในมุมมองที่คุณต้องการ
+              คลิกแถวเพื่อดูรายละเอียด
+              เอกสาร และสถานะใน
+              Pipeline ของลูกค้า
             </Typography>
           </Box>
 
-          <Box
-            sx={{
-              display: "flex",
-              gap: 1.5,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
+          <Stack
+            direction="row"
+            spacing={1.25}
           >
-            {/* VIEW SWITCH */}
-
-            <ButtonGroup
-              variant="outlined"
-              sx={{
-                "& .MuiButton-root": {
-                  borderColor: "#e2e8f0",
-                  color: "#475569",
-                  textTransform: "none",
-                  fontWeight: 700,
-                  px: 1.5,
-                  bgcolor: "#ffffff",
-                  "&.active": {
-                    bgcolor: "#f1f5f9",
-                    color: "#0f172a",
-                  },
-                },
-              }}
-            >
-              <Button
-                className={
-                  view === "kanban"
-                    ? "active"
-                    : undefined
-                }
-                startIcon={<ViewKanbanIcon />}
-                onClick={() => setView("kanban")}
-              >
-                KANBAN
-              </Button>
-
-              <Button
-                className={
-                  view === "table"
-                    ? "active"
-                    : undefined
-                }
-                startIcon={<TableViewIcon />}
-                onClick={() => setView("table")}
-              >
-                TABLE
-              </Button>
-
-              <Button
-                className={
-                  view === "grid"
-                    ? "active"
-                    : undefined
-                }
-                startIcon={<GridViewIcon />}
-                onClick={() => setView("grid")}
-              >
-                GRID
-              </Button>
-
-              <Button
-                className={
-                  view === "summary"
-                    ? "active"
-                    : undefined
-                }
-                startIcon={<InsertChartIcon />}
-                onClick={() => setView("summary")}
-              >
-                SUMMARY
-              </Button>
-            </ButtonGroup>
-
-            {/* EXPORT */}
-
             <Button
               variant="outlined"
               startIcon={<DownloadIcon />}
-              onClick={() => downloadCsv(filtered)}
+              disabled={filtered.length === 0}
+              onClick={downloadCsv}
               sx={{
                 textTransform: "none",
                 fontWeight: 700,
                 color: "#2563eb",
                 borderColor: "#bfdbfe",
-                bgcolor: "#ffffff",
-                px: 2,
                 borderRadius: 2,
-                "&:hover": {
-                  borderColor: "#2563eb",
-                  bgcolor: "#f8fbff",
-                },
               }}
             >
               Export
             </Button>
 
-            {/* CREATE */}
-
             <Button
               variant="contained"
               startIcon={<AddIcon />}
-              onClick={() => openCreate()}
+              onClick={openCreate}
               sx={{
                 textTransform: "none",
                 fontWeight: 700,
-                px: 2,
                 borderRadius: 2,
                 bgcolor: "#2563eb",
                 boxShadow: "none",
@@ -721,7 +707,95 @@ export default function CustomersPage() {
             >
               เพิ่มลูกค้าใหม่
             </Button>
-          </Box>
+          </Stack>
+        </Box>
+
+        {/* =================================================
+            STAT CARDS
+        ================================================== */}
+
+        <Box
+          sx={{
+            mb: 3,
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr",
+              sm: "repeat(2, 1fr)",
+              xl: "repeat(4, 1fr)",
+            },
+            gap: 2,
+          }}
+        >
+          {[
+            {
+              label: "ลูกค้าที่แสดง",
+              value: `${filtered.length}`,
+              sub: `จากทั้งหมด ${customers.length} ราย`,
+              color: "#2563eb",
+            },
+            {
+              label: "Quotation รวม",
+              value: formatBaht(totals.quotation),
+              sub: "มูลค่าใบเสนอราคาทั้งหมด",
+              color: "#0f62fe",
+            },
+            {
+              label: "Invoice รวม",
+              value: formatBaht(totals.invoiced),
+              sub: `รับแล้ว ${formatBaht(
+                totals.received,
+              )}`,
+              color: "#f97316",
+            },
+            {
+              label: "ค้างชำระ",
+              value: formatBaht(totals.outstanding),
+              sub: "Invoice ที่ยังไม่มี Receipt",
+              color: "#dc2626",
+            },
+          ].map((stat) => (
+            <Card
+              key={stat.label}
+              sx={{
+                border: "1px solid #e7ebf2",
+                borderRadius: "16px",
+                boxShadow:
+                  "0 1px 3px rgba(15,23,42,0.04)",
+              }}
+            >
+              <CardContent
+                sx={{
+                  "&:last-child": { pb: 2.25 },
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{ color: "#64748b" }}
+                >
+                  {stat.label}
+                </Typography>
+
+                <Typography
+                  variant="h5"
+                  sx={{
+                    mt: 0.5,
+                    fontWeight: 800,
+                    color: stat.color,
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {stat.value}
+                </Typography>
+
+                <Typography
+                  variant="caption"
+                  sx={{ color: "#94a3b8" }}
+                >
+                  {stat.sub}
+                </Typography>
+              </CardContent>
+            </Card>
+          ))}
         </Box>
 
         {/* =================================================
@@ -736,93 +810,19 @@ export default function CustomersPage() {
             flexWrap: "wrap",
             alignItems: "center",
             p: 1.5,
-            border: "1px solid #eceff4",
+            border: "1px solid #e7ebf2",
             borderRadius: "16px",
             boxShadow:
               "0 1px 3px rgba(15,23,42,0.04)",
           }}
         >
           <TextField
-            select
             size="small"
-            value={statusFilter || "all"}
-            onChange={(event) =>
-              setStatusFilter(
-                event.target.value === "all"
-                  ? ""
-                  : event.target.value,
-              )
-            }
-            sx={{ minWidth: 160 }}
-            slotProps={{
-              input: {
-                sx: {
-                  bgcolor: "#f8fafc",
-                  borderRadius: "10px",
-                  border: "1px solid #e2e8f0",
-                },
-              },
-            }}
-          >
-            <MenuItem value="all">
-              All Status
-            </MenuItem>
-
-            {CUSTOMER_STATUSES.map((item) => (
-              <MenuItem key={item} value={item}>
-                {STATUS_LABELS[item]}
-              </MenuItem>
-            ))}
-          </TextField>
-
-          <TextField
-            select
-            size="small"
-            value={dateFilter}
-            onChange={(event) =>
-              setDateFilter(
-                event.target.value as DateFilter,
-              )
-            }
-            sx={{ minWidth: 170 }}
-            slotProps={{
-              input: {
-                sx: {
-                  bgcolor: "#f8fafc",
-                  borderRadius: "10px",
-                  border: "1px solid #e2e8f0",
-                },
-              },
-            }}
-          >
-            {DATE_OPTIONS.map((option) => (
-              <MenuItem
-                key={option.value}
-                value={option.value}
-              >
-                {option.label}
-              </MenuItem>
-            ))}
-          </TextField>
-
-          <TextField
-            size="small"
-            placeholder="ค้นหา ชื่อบริษัท, อีเมล หรือเบอร์โทร..."
             value={search}
             onChange={(event) =>
               setSearch(event.target.value)
             }
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-              }
-            }}
-            autoComplete="off"
-            sx={{
-              minWidth: 260,
-              flex: 1,
-              maxWidth: 420,
-            }}
+            placeholder="ค้นหาบริษัท อีเมล เบอร์โทร หรือชื่อ Sales..."
             slotProps={{
               input: {
                 startAdornment: (
@@ -838,29 +838,99 @@ export default function CustomersPage() {
                       size="small"
                       edge="end"
                       aria-label="ล้างการค้นหา"
-                      onClick={() => setSearch("")}
+                      onClick={() =>
+                        setSearch("")
+                      }
                     >
                       <CloseIcon fontSize="small" />
                     </IconButton>
                   </InputAdornment>
-                ) : undefined,
-                sx: {
-                  bgcolor: "#f8fafc",
-                  borderRadius: "10px",
-                  border: "1px solid #e2e8f0",
-                },
+                ) : null,
+              },
+            }}
+            sx={{
+              minWidth: 260,
+              flex: 1,
+              maxWidth: 420,
+              "& .MuiOutlinedInput-root": {
+                bgcolor: "#f8fafc",
+                borderRadius: "10px",
               },
             }}
           />
 
+          <TextField
+            select
+            size="small"
+            value={statusFilter || "all"}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value === "all"
+                  ? ""
+                  : event.target.value,
+              )
+            }
+            sx={{ minWidth: 170 }}
+            slotProps={{
+              input: {
+                sx: {
+                  bgcolor: "#f8fafc",
+                  borderRadius: "10px",
+                },
+              },
+            }}
+          >
+            <MenuItem value="all">
+              ทุกสถานะ
+            </MenuItem>
+
+            {stages.map((stage) => (
+              <MenuItem
+                key={stage.stageId}
+                value={stage.stageKey}
+              >
+                {stage.label}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          <TextField
+            select
+            size="small"
+            value={dateFilter}
+            onChange={(event) =>
+              setDateFilter(
+                event.target
+                  .value as DateFilter,
+              )
+            }
+            sx={{ minWidth: 150 }}
+            slotProps={{
+              input: {
+                sx: {
+                  bgcolor: "#f8fafc",
+                  borderRadius: "10px",
+                },
+              },
+            }}
+          >
+            {DATE_OPTIONS.map((option) => (
+              <MenuItem
+                key={option.value}
+                value={option.value}
+              >
+                {option.label}
+              </MenuItem>
+            ))}
+          </TextField>
+
           {hasFilter && (
             <Button
-              size="small"
               onClick={resetFilters}
               sx={{
                 textTransform: "none",
                 fontWeight: 700,
-                color: "#2563eb",
+                color: "#64748b",
               }}
             >
               ล้างตัวกรอง
@@ -868,28 +938,18 @@ export default function CustomersPage() {
           )}
 
           <Typography
-            component="span"
             variant="body2"
-            color="text.secondary"
             sx={{
               ml: "auto",
+              fontWeight: 700,
+              color: "#64748b",
               whiteSpace: "nowrap",
             }}
           >
-            {loading && customers.length === 0 ? (
-              <Skeleton width={120} />
-            ) : (
-              <>
-                แสดง {filtered.length} /{" "}
-                {customers.length} รายการ
-              </>
-            )}
+            แสดง {filtered.length} /{" "}
+            {customers.length} รายการ
           </Typography>
         </Card>
-
-        {/* =================================================
-            ERROR
-        ================================================== */}
 
         {error && (
           <Alert
@@ -902,738 +962,439 @@ export default function CustomersPage() {
         )}
 
         {/* =================================================
-            CONTENT
+            TABLE
         ================================================== */}
 
-        {loading && customers.length === 0 ? (
-          <Card
-            sx={{
-              border: "1px solid #eceff4",
-              borderRadius: "16px",
-              bgcolor: "#ffffff",
-            }}
-          >
-            <CardContent sx={{ p: 0 }}>
-              <Stack
-                divider={
-                  <Divider flexItem />
-                }
-              >
-                <Box sx={{ px: 3, py: 2.5 }}>
-                  <Skeleton
-                    width={220}
-                    height={30}
-                  />
-                </Box>
-
-                {Array.from({
-                  length: 4,
-                }).map((_, index) => (
-                  <Box
-                    key={`customer-skeleton-${index}`}
-                    sx={{
-                      px: 3,
-                      py: 2.25,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 2.5,
-                    }}
-                  >
-                    <Skeleton
-                      variant="circular"
-                      width={40}
-                      height={40}
-                    />
-                    <Skeleton
-                      width={160}
-                      height={22}
-                    />
-                    <Skeleton width={200} />
-                    <Box sx={{ flex: 1 }} />
-                    <Skeleton width={90} />
-                  </Box>
-                ))}
-              </Stack>
-            </CardContent>
-          </Card>
-        ) : filtered.length === 0 ? (
-          <Card
-            sx={{
-              border: "1px solid #eceff4",
-              borderRadius: "16px",
-              bgcolor: "#ffffff",
-            }}
-          >
-            <CardContent
-              sx={{
-                py: 7,
-                textAlign: "center",
-              }}
-            >
-              {hasFilter ? (
-                <>
-                  <SearchOffIcon
-                    sx={{
-                      fontSize: 44,
-                      color: "#cbd5e1",
-                    }}
-                  />
-
-                  <Typography
-                    component="div"
-                    variant="body1"
-                    sx={{
-                      mt: 1.5,
-                      fontWeight: 700,
-                      color: "#334155",
-                    }}
-                  >
-                    ไม่พบผลลัพธ์
-                  </Typography>
-
-                  <Typography
-                    component="div"
-                    variant="body2"
-                    sx={{ mt: 0.5, color: "#94a3b8" }}
-                  >
-                    {search.trim()
-                      ? `ไม่มีลูกค้าที่ตรงกับ "${search.trim()}"`
-                      : "ไม่มีลูกค้าที่ตรงกับตัวกรองที่เลือก"}
-                  </Typography>
-
-                  <Button
-                    onClick={resetFilters}
-                    sx={{
-                      mt: 2,
-                      textTransform: "none",
-                      fontWeight: 700,
-                      color: "#2563eb",
-                    }}
-                  >
-                    ล้างการค้นหา/ตัวกรอง
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <InboxIcon
-                    sx={{
-                      fontSize: 44,
-                      color: "#cbd5e1",
-                    }}
-                  />
-
-                  <Typography
-                    component="div"
-                    variant="body1"
-                    sx={{
-                      mt: 1.5,
-                      fontWeight: 700,
-                      color: "#334155",
-                    }}
-                  >
-                    ยังไม่มีลูกค้า
-                  </Typography>
-
-                  <Typography
-                    component="div"
-                    variant="body2"
-                    sx={{ mt: 0.5, color: "#94a3b8" }}
-                  >
-                    เริ่มต้นด้วยการเพิ่มลูกค้ารายแรก
-                  </Typography>
-
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => openCreate()}
-                    sx={{
-                      mt: 2,
-                      textTransform: "none",
-                      fontWeight: 700,
-                      bgcolor: "#2563eb",
-                      boxShadow: "none",
-                      "&:hover": {
-                        bgcolor: "#1d4ed8",
-                        boxShadow: "none",
-                      },
-                    }}
-                  >
-                    เพิ่มลูกค้าใหม่
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        ) : view === "kanban" ? (
-          <CustomerBoard
-            customers={filtered}
-            onMove={(customerId, status) =>
-              void handleMove(
-                customerId,
-                status,
-              )
-            }
-            onAdd={openCreate}
-            onEdit={openEdit}
-            onDelete={setDeleteTarget}
-          />
-        ) : view === "grid" ? (
-          /* =================================================
-              GRID VIEW
-          ================================================== */
-
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: {
-                xs: "1fr",
-                sm: "repeat(2, 1fr)",
-                lg: "repeat(3, 1fr)",
-                xl: "repeat(4, 1fr)",
-              },
-              gap: 2,
-            }}
-          >
-            {filtered.map((customer) => (
-              <Card
-                key={customer.customerId}
-                sx={{
-                  border: "1px solid #e8ecf2",
-                  borderRadius: 3,
-                  bgcolor: "#ffffff",
-                  transition:
-                    "border-color 120ms ease, box-shadow 120ms ease",
-                  "&:hover": {
-                    borderColor: "#c7d2fe",
-                    boxShadow:
-                      "0 6px 16px rgba(15,23,42,0.08)",
-                  },
-                }}
-              >
-                <CardContent
-                  sx={{
-                    p: 2.5,
-                    "&:last-child": { pb: 2.5 },
-                  }}
+        <Card
+          sx={{
+            border: "1px solid #e7ebf2",
+            borderRadius: "16px",
+            boxShadow:
+              "0 1px 3px rgba(15,23,42,0.04)",
+            overflow: "hidden",
+          }}
+        >
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow
+                  sx={{ bgcolor: "#fafcff" }}
                 >
-                  <Box
+                  <TableCell
                     sx={{
-                      display: "flex",
-                      justifyContent:
-                        "space-between",
-                      alignItems:
-                        "flex-start",
-                      gap: 1,
+                      fontWeight: 800,
+                      color: "#475569",
                     }}
                   >
-                    <Typography
-                      component="div"
-                      variant="subtitle1"
-                      sx={{
-                        fontWeight: 800,
-                        color: "#172033",
-                        wordBreak: "break-word",
-                      }}
-                    >
-                      {customer.companyName}
-                    </Typography>
+                    บริษัท / ลูกค้า
+                  </TableCell>
 
-                    <Chip
-                      size="small"
-                      label={
-                        STATUS_LABELS[
-                          customer.status
-                        ]
-                      }
-                      sx={{
-                        fontWeight: 700,
-                        borderRadius: "8px",
-                        color:
-                          STATUS_CHIP_STYLES[
-                            customer.status
-                          ].fg,
-                        bgcolor:
-                          STATUS_CHIP_STYLES[
-                            customer.status
-                          ].bg,
-                        flexShrink: 0,
-                      }}
-                    />
-                  </Box>
-
-                  <Typography
-                    component="div"
-                    variant="body2"
-                    color="text.secondary"
+                  <TableCell
                     sx={{
-                      mt: 1,
-                      wordBreak: "break-word",
+                      fontWeight: 800,
+                      color: "#475569",
                     }}
                   >
-                    {customer.email ||
-                      "ไม่มีอีเมล"}
-                  </Typography>
+                    Sales ผู้รับผิดชอบ
+                  </TableCell>
 
-                  <Typography
-                    component="div"
-                    variant="body2"
-                    color="text.secondary"
+                  <TableCell
                     sx={{
-                      wordBreak: "break-word",
+                      fontWeight: 800,
+                      color: "#475569",
                     }}
                   >
-                    {customer.phone ||
-                      "ไม่มีเบอร์โทร"}
-                  </Typography>
+                    สถานะใน Pipeline
+                  </TableCell>
 
-                  <Box
+                  <TableCell
                     sx={{
-                      mt: 2,
-                      display: "flex",
-                      justifyContent:
-                        "space-between",
-                      alignItems: "center",
-                      gap: 1,
+                      fontWeight: 800,
+                      color: "#475569",
                     }}
                   >
+                    เอกสาร
                     <Typography
                       component="span"
                       variant="caption"
-                      color="text.secondary"
-                    >
-                      {new Date(
-                        customer.createdAt,
-                      ).toLocaleDateString(
-                        "th-TH",
-                      )}
-                    </Typography>
-
-                    <Box
                       sx={{
-                        display: "flex",
-                        gap: 0.5,
+                        display: "block",
+                        fontWeight: 500,
+                        color: "#94a3b8",
                       }}
                     >
-                      <Button
-                        size="small"
-                        onClick={() =>
-                          openEdit(customer)
-                        }
-                        sx={{
-                          minHeight: 26,
-                          px: 1,
-                          fontSize: 12,
-                          textTransform: "none",
-                          color: "#475569",
-                        }}
-                      >
-                        แก้ไข
-                      </Button>
-
-                      <Button
-                        size="small"
-                        color="error"
-                        onClick={() =>
-                          setDeleteTarget(
-                            customer,
-                          )
-                        }
-                        sx={{
-                          minHeight: 26,
-                          px: 1,
-                          fontSize: 12,
-                          textTransform: "none",
-                        }}
-                      >
-                        ลบ
-                      </Button>
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card>
-            ))}
-          </Box>
-        ) : view === "summary" ? (
-          /* =================================================
-              SUMMARY VIEW
-          ================================================== */
-
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 2,
-            }}
-          >
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: {
-                  xs: "1fr",
-                  sm: "repeat(2, 1fr)",
-                  xl: "repeat(4, 1fr)",
-                },
-                gap: 2,
-              }}
-            >
-              {[
-                {
-                  label: "ลูกค้าทั้งหมด",
-                  value: summaryTotal,
-                  suffix: "ราย",
-                  color: "#2563eb",
-                },
-                {
-                  label: "Close Won",
-                  value: wonCount,
-                  suffix: "ราย",
-                  color: "#16a34a",
-                },
-                {
-                  label: "Close Lost",
-                  value: lostCount,
-                  suffix: "ราย",
-                  color: "#dc2626",
-                },
-                {
-                  label: "Win Rate",
-                  value: winRate,
-                  suffix: "%",
-                  color: "#7c3aed",
-                },
-              ].map((stat) => (
-                <Card
-                  key={stat.label}
-                  sx={{
-                    border:
-                      "1px solid #e8ecf2",
-                    borderRadius: 3,
-                    bgcolor: "#ffffff",
-                  }}
-                >
-                  <CardContent>
-                    <Typography
-                      component="div"
-                      variant="body2"
-                      color="text.secondary"
-                    >
-                      {stat.label}
+                      QT / IV / RC
                     </Typography>
+                  </TableCell>
 
-                    <Typography
-                      component="div"
-                      variant="h4"
-                      sx={{
-                        mt: 1,
-                        fontWeight: 800,
-                        color: stat.color,
-                      }}
-                    >
-                      {stat.value}
-                      <Typography
-                        component="span"
-                        variant="body2"
-                        sx={{
-                          ml: 0.5,
-                          fontWeight: 600,
-                          color: "#64748b",
-                        }}
-                      >
-                        {stat.suffix}
-                      </Typography>
-                    </Typography>
-                  </CardContent>
-                </Card>
-              ))}
-            </Box>
+                  <TableCell
+                    align="right"
+                    sx={{
+                      fontWeight: 800,
+                      color: "#475569",
+                    }}
+                  >
+                    ค้างชำระ
+                  </TableCell>
 
-            <Card
-              sx={{
-                border: "1px solid #e8ecf2",
-                borderRadius: 3,
-                bgcolor: "#ffffff",
-              }}
-            >
-              <CardContent
-                sx={{ p: 3 }}
-              >
-                <Typography
-                  component="h2"
-                  variant="h6"
-                  sx={{
-                    fontWeight: 800,
-                    mb: 2.5,
-                  }}
-                >
-                  จำนวนลูกค้าตามสถานะ
-                </Typography>
+                  <TableCell
+                    sx={{
+                      fontWeight: 800,
+                      color: "#475569",
+                    }}
+                  >
+                    วันที่เพิ่ม
+                  </TableCell>
 
-                <Box
-                  sx={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 2,
-                  }}
-                >
-                  {statusCounts.map(
-                    ({ status, count }) => {
-                      const percent =
-                        summaryTotal === 0
-                          ? 0
-                          : Math.round(
-                              (count /
-                                summaryTotal) *
-                                100,
-                            );
+                  <TableCell
+                    align="right"
+                    sx={{
+                      fontWeight: 800,
+                      color: "#475569",
+                    }}
+                  >
+                    จัดการ
+                  </TableCell>
+                </TableRow>
+              </TableHead>
 
-                      return (
-                        <Box key={status}>
-                          <Box
-                            sx={{
-                              display:
-                                "flex",
-                              justifyContent:
-                                "space-between",
-                              alignItems:
-                                "center",
-                              mb: 0.5,
-                            }}
-                          >
-                            <Box
-                              sx={{
-                                display:
-                                  "flex",
-                                alignItems:
-                                  "center",
-                                gap: 1,
-                              }}
-                            >
-                              <Box
-                                sx={{
-                                  width: 10,
-                                  height: 10,
-                                  borderRadius:
-                                    "50%",
-                                  bgcolor:
-                                    statusColors[
-                                      status
-                                    ],
-                                }}
-                              />
-
-                              <Typography
-                                component="span"
-                                variant="body2"
-                                sx={{
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {
-                                  STATUS_LABELS[
-                                    status
-                                  ]
-                                }
-                              </Typography>
-                            </Box>
-
-                            <Typography
-                              component="span"
-                              variant="body2"
-                              color="text.secondary"
-                            >
-                              {count} ราย (
-                              {percent}%)
-                            </Typography>
-                          </Box>
-
-                          <Box
-                            sx={{
-                              height: 10,
-                              borderRadius: 5,
-                              bgcolor:
-                                "#eef1f6",
-                              overflow:
-                                "hidden",
-                            }}
-                          >
-                            <Box
-                              sx={{
-                                height:
-                                  "100%",
-                                width: `${percent}%`,
-                                borderRadius: 5,
-                                bgcolor:
-                                  statusColors[
-                                    status
-                                  ],
-                                transition:
-                                  "width 200ms ease",
-                              }}
+              <TableBody>
+                {loading ? (
+                  Array.from({
+                    length: 6,
+                  }).map((_, row) => (
+                    <TableRow key={`skeleton-${row}`}>
+                      {[220, 150, 140, 170, 110, 90, 140].map(
+                        (width, cell) => (
+                          <TableCell key={cell}>
+                            <Skeleton
+                              width={width}
+                              height={26}
                             />
-                          </Box>
-                        </Box>
-                      );
-                    },
-                  )}
-                </Box>
-              </CardContent>
-            </Card>
-          </Box>
-        ) : (
-          /* =================================================
-              TABLE VIEW
-          ================================================== */
-
-          <Card
-            sx={{
-              border: "1px solid #e8ecf2",
-              borderRadius: 3,
-              bgcolor: "#ffffff",
-            }}
-          >
-            <CardContent sx={{ p: 0 }}>
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell
-                        sx={{ fontWeight: 800 }}
-                      >
-                        บริษัท
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 800 }}
-                      >
-                        อีเมล
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 800 }}
-                      >
-                        เบอร์โทร
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 800 }}
-                      >
-                        สถานะ
-                      </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 800 }}
-                      >
-                        วันที่เพิ่ม
-                      </TableCell>
-                      <TableCell
-                        align="right"
-                        sx={{ fontWeight: 800 }}
-                      >
-                        จัดการ
-                      </TableCell>
+                          </TableCell>
+                        ),
+                      )}
                     </TableRow>
-                  </TableHead>
+                  ))
+                ) : filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7}>
+                      <Box
+                        sx={{
+                          py: 7,
+                          textAlign: "center",
+                        }}
+                      >
+                        <SearchOffIcon
+                          sx={{
+                            fontSize: 38,
+                            color: "#cbd5e1",
+                          }}
+                        />
 
-                  <TableBody>
-                    {filtered.map((customer) => (
+                        <Typography
+                          sx={{
+                            mt: 1.5,
+                            fontWeight: 800,
+                            color: "#172033",
+                          }}
+                        >
+                          {hasFilter
+                            ? "ไม่พบผลลัพธ์"
+                            : "ยังไม่มีลูกค้า"}
+                        </Typography>
+
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            mt: 0.5,
+                            color: "#94a3b8",
+                          }}
+                        >
+                          {hasFilter
+                            ? "ไม่พบลูกค้าที่ตรงกับตัวกรอง"
+                            : "เริ่มเพิ่มลูกค้าตัวแรกได้จากปุ่มเพิ่มลูกค้าใหม่"}
+                        </Typography>
+
+                        {hasFilter && (
+                          <Button
+                            onClick={resetFilters}
+                            sx={{
+                              mt: 1.5,
+                              textTransform: "none",
+                            }}
+                          >
+                            ล้างตัวกรอง
+                          </Button>
+                        )}
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filtered.map((customer) => {
+                    const stage =
+                      stageByKey[customer.status];
+
+                    const summary =
+                      docSummary[customer.customerId] ??
+                      emptySummary();
+
+                    const assigned =
+                      customer.assignedUser?.name ??
+                      null;
+
+                    return (
                       <TableRow
                         key={customer.customerId}
                         hover
+                        onClick={() =>
+                          setDetailTarget(customer)
+                        }
+                        sx={{
+                          cursor: "pointer",
+                          "&:last-child td": {
+                            borderBottom: 0,
+                          },
+                        }}
                       >
                         <TableCell>
                           <Typography
-                            component="span"
-                            sx={{ fontWeight: 700 }}
+                            sx={{
+                              fontWeight: 800,
+                              color: "#0f172a",
+                            }}
                           >
-                            {customer.companyName}
+                            {
+                              customer.companyName
+                            }
+                          </Typography>
+
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: "#64748b",
+                            }}
+                          >
+                            {customer.email ||
+                              "-"}
+                            {" · "}
+                            {customer.phone || "-"}
                           </Typography>
                         </TableCell>
 
                         <TableCell>
-                          {customer.email || "-"}
-                        </TableCell>
+                          {assigned ? (
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 1,
+                              }}
+                            >
+                              <Avatar
+                                sx={{
+                                  width: 28,
+                                  height: 28,
+                                  fontSize: 11,
+                                  fontWeight: 800,
+                                  bgcolor: "#e8f1ff",
+                                  color: "#1d4ed8",
+                                }}
+                              >
+                                {initials(assigned)}
+                              </Avatar>
 
-                        <TableCell>
-                          {customer.phone || "-"}
-                        </TableCell>
-
-                        <TableCell>
-                      <Chip
-                        size="small"
-                        label={
-                          STATUS_LABELS[
-                            customer.status
-                          ]
-                        }
-                        sx={{
-                          fontWeight: 700,
-                          borderRadius: "8px",
-                          color:
-                            STATUS_CHIP_STYLES[
-                              customer.status
-                            ].fg,
-                          bgcolor:
-                            STATUS_CHIP_STYLES[
-                              customer.status
-                            ].bg,
-                        }}
-                      />
-                        </TableCell>
-
-                        <TableCell>
-                          {new Date(
-                            customer.createdAt,
-                          ).toLocaleDateString(
-                            "th-TH",
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  fontWeight: 700,
+                                  color: "#334155",
+                                }}
+                              >
+                                {assigned}
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Typography
+                              variant="body2"
+                              sx={{ color: "#94a3b8" }}
+                            >
+                              ยังไม่ระบุ
+                            </Typography>
                           )}
+                        </TableCell>
+
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={
+                              stage?.label ??
+                              customer.status
+                            }
+                            sx={{
+                              fontWeight: 700,
+                              borderRadius: "8px",
+                              color: "#ffffff",
+                              bgcolor:
+                                stage?.color ??
+                                "#94a3b8",
+                            }}
+                          />
+                        </TableCell>
+
+                        <TableCell>
+                          <Stack
+                            direction="row"
+                            spacing={0.75}
+                          >
+                            {[
+                              {
+                                label: "QT",
+                                count:
+                                  summary.quotation
+                                    .count,
+                                color: "#2563eb",
+                              },
+                              {
+                                label: "IV",
+                                count:
+                                  summary.invoice
+                                    .count,
+                                color: "#f97316",
+                              },
+                              {
+                                label: "RC",
+                                count:
+                                  summary.receipt
+                                    .count,
+                                color: "#16a34a",
+                              },
+                            ].map((item) => (
+                              <Chip
+                                key={item.label}
+                                size="small"
+                                label={`${item.label} ${item.count}`}
+                                sx={{
+                                  fontWeight: 800,
+                                  fontSize: 11,
+                                  borderRadius: "7px",
+                                  bgcolor:
+                                    item.count > 0
+                                      ? `${item.color}14`
+                                      : "#f4f6f9",
+                                  color:
+                                    item.count > 0
+                                      ? item.color
+                                      : "#94a3b8",
+                                }}
+                              />
+                            ))}
+                          </Stack>
+                        </TableCell>
+
+                        <TableCell align="right">
+                          <Typography
+                            sx={{
+                              fontWeight: 800,
+                              color:
+                                summary.outstanding >
+                                0
+                                  ? "#dc2626"
+                                  : "#94a3b8",
+                            }}
+                          >
+                            {formatBaht(
+                              summary.outstanding,
+                            )}
+                          </Typography>
+                        </TableCell>
+
+                        <TableCell>
+                          <Typography
+                            variant="body2"
+                            sx={{ color: "#475569" }}
+                          >
+                            {formatDate(
+                              customer.createdAt,
+                            )}
+                          </Typography>
                         </TableCell>
 
                         <TableCell align="right">
                           <Stack
                             direction="row"
-                            spacing={1}
+                            spacing={0.5}
                             sx={{
                               justifyContent:
                                 "flex-end",
                             }}
                           >
-                            <Button
+                            <IconButton
                               size="small"
-                              variant="outlined"
-                              onClick={() =>
-                                openEdit(customer)
-                              }
+                              aria-label="ดูรายละเอียด"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDetailTarget(
+                                  customer,
+                                );
+                              }}
                               sx={{
-                                textTransform:
-                                  "none",
+                                color: "#64748b",
                               }}
                             >
-                              แก้ไข
-                            </Button>
+                              <VisibilityOutlinedIcon fontSize="small" />
+                            </IconButton>
 
-                            <Button
+                            <IconButton
                               size="small"
-                              color="error"
-                              variant="outlined"
-                              onClick={() =>
+                              aria-label="แก้ไขลูกค้า"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openEdit(customer);
+                              }}
+                              sx={{
+                                color: "#64748b",
+                              }}
+                            >
+                              <EditOutlinedIcon fontSize="small" />
+                            </IconButton>
+
+                            <IconButton
+                              size="small"
+                              aria-label="ลบลูกค้า"
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 setDeleteTarget(
                                   customer,
-                                )
-                              }
-                              sx={{
-                                textTransform:
-                                  "none",
+                                );
                               }}
+                              sx={{ color: "#dc2626" }}
                             >
-                              ลบ
-                            </Button>
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
                           </Stack>
                         </TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </CardContent>
-          </Card>
-        )}
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Card>
       </Box>
+
+      {/* =================================================
+          DETAIL DIALOG
+      ================================================== */}
+
+      {detailTarget && (
+        <CustomerDetailDialog
+          customer={detailTarget}
+          stages={stages}
+          onClose={() => setDetailTarget(null)}
+        />
+      )}
 
       {/* =================================================
           CREATE / EDIT DIALOG
@@ -1705,23 +1466,22 @@ export default function CustomersPage() {
               <TextField
                 fullWidth
                 select
-                label="สถานะ"
+                label="สถานะใน Pipeline"
                 value={form.status}
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    status: event.target
-                      .value as CustomerStatus,
+                    status: event.target.value,
                   }))
                 }
                 disabled={saving}
               >
-                {CUSTOMER_STATUSES.map((item) => (
+                {stages.map((stage) => (
                   <MenuItem
-                    key={item}
-                    value={item}
+                    key={stage.stageId}
+                    value={stage.stageKey}
                   >
-                    {STATUS_LABELS[item]}
+                    {stage.label}
                   </MenuItem>
                 ))}
               </TextField>
@@ -1806,8 +1566,6 @@ export default function CustomersPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
-      {/* NOTICE */}
 
       <Snackbar
         open={Boolean(notice)}
