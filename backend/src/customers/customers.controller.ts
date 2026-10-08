@@ -58,11 +58,26 @@ export class CustomersController {
     return this.customersService.update(id, dto);
   }
 
+  /*
+   * ปิดใช้งานลูกค้า (soft delete)
+   * ข้อมูลไม่ถูกลบออกจากระบบ แค่ถูกซ่อน
+   */
   @Delete(':id')
-  remove(
+  deactivate(
     @Param('id', ParseIntPipe)
     id: number,
   ) {
-    return this.customersService.remove(id);
+    return this.customersService.deactivate(id);
+  }
+
+  /*
+   * เปิดใช้งานลูกค้าที่ปิดไว้กลับมา
+   */
+  @Patch(':id/restore')
+  restore(
+    @Param('id', ParseIntPipe)
+    id: number,
+  ) {
+    return this.customersService.restore(id);
   }
 }

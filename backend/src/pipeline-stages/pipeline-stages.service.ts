@@ -43,6 +43,7 @@ export class PipelineStagesService {
     }[] = await this.stagesRepository.manager.query(
       `SELECT status AS "stageKey", COUNT(*)::int AS count
        FROM customers
+       WHERE is_active = true
        GROUP BY status`,
     );
 
@@ -87,7 +88,7 @@ export class PipelineStagesService {
       await this.stagesRepository.manager.query(
         `SELECT COUNT(*)::int AS count
          FROM customers
-         WHERE status = $1`,
+         WHERE status = $1 AND is_active = true`,
         [stageKey],
       );
 

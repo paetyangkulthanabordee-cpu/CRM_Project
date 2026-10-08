@@ -107,6 +107,8 @@ export interface Customer {
   status: string;
   assignedId: number | null;
   assignedUser?: SalesUser | null;
+  purchaseCount: number;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }

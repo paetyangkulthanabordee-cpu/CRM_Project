@@ -16,7 +16,9 @@ export class DashboardService {
   async getSummary() {
     const [customers, stages] =
       await Promise.all([
-        this.customersRepository.find(),
+        this.customersRepository.find({
+          where: { isActive: true },
+        }),
         this.stagesService.findAll(),
       ]);
 

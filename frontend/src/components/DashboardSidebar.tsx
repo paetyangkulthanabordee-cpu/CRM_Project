@@ -151,6 +151,7 @@ export default function DashboardSidebar({
       icon: <SettingsIcon fontSize="small" />,
       matches: (path) =>
         path.startsWith("/permissions") ||
+        path.startsWith("/users") ||
         path.startsWith("/manage-pipeline") ||
         path.startsWith("/audit-logs"),
       children: [
@@ -159,6 +160,12 @@ export default function DashboardSidebar({
           href: "/permissions",
           label: "Permissions",
           icon: <ShieldIcon fontSize="small" />,
+        },
+        {
+          kind: "link",
+          href: "/users",
+          label: "Users",
+          icon: <PeopleAltIcon fontSize="small" />,
         },
         {
           kind: "link",
@@ -188,6 +195,10 @@ export default function DashboardSidebar({
     const childVisible = entry.children.some((child) => {
       if (child.href === "/permissions") {
         return permissions.permissions;
+      }
+
+      if (child.href === "/users") {
+        return permissions.administration;
       }
 
       if (child.href === "/manage-pipeline") {

@@ -8,10 +8,11 @@ import { useRouter } from "next/navigation";
 import { z } from "zod";
 
 import AddIcon from "@mui/icons-material/Add";
+import BlockIcon from "@mui/icons-material/Block";
 import CloseIcon from "@mui/icons-material/Close";
-import DeleteIcon from "@mui/icons-material/Delete";
 import DownloadIcon from "@mui/icons-material/Download";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import RestoreIcon from "@mui/icons-material/Restore";
 import SearchIcon from "@mui/icons-material/Search";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
@@ -21,12 +22,14 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
+import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import MenuItem from "@mui/material/MenuItem";
@@ -38,6 +41,7 @@ import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
+import TablePagination from "@mui/material/TablePagination";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
@@ -200,6 +204,16 @@ export default function CustomersPage() {
     useState("");
   const [dateFilter, setDateFilter] =
     useState<DateFilter>("all");
+  const [includeInactive, setIncludeInactive] =
+    useState(false);
+
+  /*
+   * PAGINATION (คำนวณฝั่ง client)
+   * page เริ่มที่ 0 ตามที่ MUI ใช้
+   */
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] =
+    useState(10);
 
   const [detailTarget, setDetailTarget] =
     useState<Customer | null>(null);
@@ -213,9 +227,19 @@ export default function CustomersPage() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const [deleteTarget, setDeleteTarget] =
+  /*
+   * ปิดใช้งานแทนการลบ
+   * ลูกค้าที่ปิดใช้งานจะถูกซ่อน แต่เปิดใช้งานอีกครั้งได้
+   */
+  const [deactivateTarget, setDeactivateTarget] =
     useState<Customer | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [deactivating, setDeactivating] =
+    useState(false);
+
+  const [reactivateTarget, setReactivateTarget] =
+    useState<Customer | null>(null);
+  const [reactivating, setReactivating] =
+    useState(false);
 
   const [notice, setNotice] = useState("");
   const [noticeType, setNoticeType] = useState<
@@ -237,7 +261,9 @@ export default function CustomersPage() {
     try {
       const [customersRes, stagesRes, docsRes] =
         await Promise.all([
-          api.get<Customer[]>("/customers"),
+          api.get<Customer[]>("/customers", {
+            params: { includeInactive },
+          }),
           api.get<PipelineStage[]>(
             "/pipeline-stages",
           ),
@@ -270,7 +296,7 @@ export default function CustomersPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [includeInactive]);
 
   useEffect(() => {
     if (!ready) {
@@ -345,15 +371,66 @@ export default function CustomersPage() {
     dateFilter,
   ]);
 
+  /* =====================================================
+     PAGINATION
+     ====================================================== */
+
+  const pageCount = Math.max(
+    1,
+    Math.ceil(filtered.length / rowsPerPage),
+  );
+
+  /*
+   * กันหน้าค้างตอน render
+   * เช่น หลังลบลูกค้าจนหน้าสุดท้ายหายไป
+   * ทำตรงนี้แทน useEffect เพราะไม่ต้องเด้ง render ซ้ำ
+   */
+  const safePage = Math.min(
+    page,
+    pageCount - 1,
+  );
+
+  const pagedCustomers = useMemo(() => {
+    const start = safePage * rowsPerPage;
+
+    return filtered.slice(
+      start,
+      start + rowsPerPage,
+    );
+  }, [filtered, safePage, rowsPerPage]);
+
+  /*
+   * เปลี่ยนตัวกรอง = กลับหน้าแรกเสมอ
+   * เพราะข้อมูลหน้าปัจจุบันไม่เกี่ยวข้องกับผลลัพธ์ใหม่
+   * (ทำใน handler ที่เปลี่ยนตัวกรอง ไม่ใช่ใน useEffect)
+   */
+  function changeSearch(value: string) {
+    setSearch(value);
+    setPage(0);
+  }
+
+  function changeStatusFilter(value: string) {
+    setStatusFilter(value);
+    setPage(0);
+  }
+
+  function changeDateFilter(value: DateFilter) {
+    setDateFilter(value);
+    setPage(0);
+  }
+
   const hasFilter =
     Boolean(search.trim()) ||
     Boolean(statusFilter) ||
-    dateFilter !== "all";
+    dateFilter !== "all" ||
+    includeInactive;
 
   function resetFilters() {
     setSearch("");
     setStatusFilter("");
     setDateFilter("all");
+    setIncludeInactive(false);
+    setPage(0);
   }
 
   const stageByKey = useMemo(() => {
@@ -372,8 +449,11 @@ export default function CustomersPage() {
     let invoiced = 0;
     let received = 0;
     let outstanding = 0;
+    let purchases = 0;
 
     for (const customer of filtered) {
+      purchases += customer.purchaseCount ?? 0;
+
       const summary =
         docSummary[customer.customerId];
 
@@ -387,7 +467,13 @@ export default function CustomersPage() {
       outstanding += summary.outstanding;
     }
 
-    return { quotation, invoiced, received, outstanding };
+    return {
+      quotation,
+      invoiced,
+      received,
+      outstanding,
+      purchases,
+    };
   }, [filtered, docSummary]);
 
   /* =====================================================
@@ -476,35 +562,74 @@ export default function CustomersPage() {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteTarget) {
+  /*
+   * ปิดใช้งานลูกค้า (soft delete)
+   * ข้อมูลไม่ถูกลบ แค่ถูกซ่อนจากหน้าหลัก
+   */
+  async function handleDeactivate() {
+    if (!deactivateTarget) {
       return;
     }
 
-    setDeleting(true);
+    setDeactivating(true);
 
     try {
       await api.delete(
-        `/customers/${deleteTarget.customerId}`,
+        `/customers/${deactivateTarget.customerId}`,
       );
 
       showNotice(
-        "ลบลูกค้าเรียบร้อยแล้ว",
+        "ปิดใช้งานลูกค้าเรียบร้อยแล้ว",
         "success",
       );
-      setDeleteTarget(null);
+      setDeactivateTarget(null);
       await loadAll();
     } catch (err) {
       showNotice(
         getErrorMessage(
           err,
-          "ไม่สามารถลบลูกค้าได้",
+          "ไม่สามารถปิดใช้งานลูกค้าได้",
         ),
         "error",
       );
-      setDeleteTarget(null);
+      setDeactivateTarget(null);
     } finally {
-      setDeleting(false);
+      setDeactivating(false);
+    }
+  }
+
+  /*
+   * เปิดใช้งานลูกค้าที่ปิดไว้กลับมา
+   */
+  async function handleReactivate() {
+    if (!reactivateTarget) {
+      return;
+    }
+
+    setReactivating(true);
+
+    try {
+      await api.patch(
+        `/customers/${reactivateTarget.customerId}/restore`,
+      );
+
+      showNotice(
+        "เปิดใช้งานลูกค้าอีกครั้งเรียบร้อยแล้ว",
+        "success",
+      );
+      setReactivateTarget(null);
+      await loadAll();
+    } catch (err) {
+      showNotice(
+        getErrorMessage(
+          err,
+          "ไม่สามารถเปิดใช้งานลูกค้าได้",
+        ),
+        "error",
+      );
+      setReactivateTarget(null);
+    } finally {
+      setReactivating(false);
     }
   }
 
@@ -518,6 +643,7 @@ export default function CustomersPage() {
       "Quotation",
       "Invoice",
       "Receipt",
+      "Purchase Count",
       "Created",
     ];
 
@@ -535,6 +661,7 @@ export default function CustomersPage() {
         summary?.quotation.total ?? 0,
         summary?.invoice.total ?? 0,
         summary?.receipt.total ?? 0,
+        customer.purchaseCount,
         formatDate(customer.createdAt),
       ];
     });
@@ -721,7 +848,7 @@ export default function CustomersPage() {
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, 1fr)",
-              xl: "repeat(4, 1fr)",
+              xl: "repeat(5, 1fr)",
             },
             gap: 2,
           }}
@@ -752,6 +879,12 @@ export default function CustomersPage() {
               value: formatBaht(totals.outstanding),
               sub: "Invoice ที่ยังไม่มี Receipt",
               color: "#dc2626",
+            },
+            {
+              label: "จำนวนการซื้อ",
+              value: `${totals.purchases}`,
+              sub: "Receipt สำเร็จของลูกค้าที่แสดง",
+              color: "#16a34a",
             },
           ].map((stat) => (
             <Card
@@ -820,7 +953,7 @@ export default function CustomersPage() {
             size="small"
             value={search}
             onChange={(event) =>
-              setSearch(event.target.value)
+              changeSearch(event.target.value)
             }
             placeholder="ค้นหาบริษัท อีเมล เบอร์โทร หรือชื่อ Sales..."
             slotProps={{
@@ -839,7 +972,7 @@ export default function CustomersPage() {
                       edge="end"
                       aria-label="ล้างการค้นหา"
                       onClick={() =>
-                        setSearch("")
+                        changeSearch("")
                       }
                     >
                       <CloseIcon fontSize="small" />
@@ -864,7 +997,7 @@ export default function CustomersPage() {
             size="small"
             value={statusFilter || "all"}
             onChange={(event) =>
-              setStatusFilter(
+              changeStatusFilter(
                 event.target.value === "all"
                   ? ""
                   : event.target.value,
@@ -899,7 +1032,7 @@ export default function CustomersPage() {
             size="small"
             value={dateFilter}
             onChange={(event) =>
-              setDateFilter(
+              changeDateFilter(
                 event.target
                   .value as DateFilter,
               )
@@ -923,6 +1056,30 @@ export default function CustomersPage() {
               </MenuItem>
             ))}
           </TextField>
+
+          <FormControlLabel
+            control={
+              <Checkbox
+                size="small"
+                checked={includeInactive}
+                onChange={(event) =>
+                  setIncludeInactive(
+                    event.target.checked,
+                  )
+                }
+              />
+            }
+            label="แสดงลูกค้าที่ปิดใช้งาน"
+            sx={{
+              mr: 0,
+              "& .MuiFormControlLabel-label": {
+                fontSize: 13,
+                fontWeight: 700,
+                color: "#475569",
+                whiteSpace: "nowrap",
+              },
+            }}
+          />
 
           {hasFilter && (
             <Button
@@ -1028,6 +1185,26 @@ export default function CustomersPage() {
                   </TableCell>
 
                   <TableCell
+                    sx={{
+                      fontWeight: 800,
+                      color: "#475569",
+                    }}
+                  >
+                    จำนวนการซื้อ
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      sx={{
+                        display: "block",
+                        fontWeight: 500,
+                        color: "#94a3b8",
+                      }}
+                    >
+                      Receipt สำเร็จ
+                    </Typography>
+                  </TableCell>
+
+                  <TableCell
                     align="right"
                     sx={{
                       fontWeight: 800,
@@ -1061,10 +1238,25 @@ export default function CustomersPage() {
               <TableBody>
                 {loading ? (
                   Array.from({
-                    length: 6,
+                    /*
+                     * ให้ความสูงตารางนิ่ง
+                     * ไม่ว่าจะเลือกกี่แถวต่อหน้า
+                     */
+                    length: Math.min(
+                      rowsPerPage,
+                      10,
+                    ),
                   }).map((_, row) => (
                     <TableRow key={`skeleton-${row}`}>
-                      {[220, 150, 140, 170, 110, 90, 140].map(
+                      {[
+                        220,
+                        150,
+                        140,
+                        170,
+                        130,
+                        90,
+                        140,
+                      ].map(
                         (width, cell) => (
                           <TableCell key={cell}>
                             <Skeleton
@@ -1078,7 +1270,7 @@ export default function CustomersPage() {
                   ))
                 ) : filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7}>
+                        <TableCell colSpan={8}>
                       <Box
                         sx={{
                           py: 7,
@@ -1131,7 +1323,7 @@ export default function CustomersPage() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((customer) => {
+                  pagedCustomers.map((customer) => {
                     const stage =
                       stageByKey[customer.status];
 
@@ -1155,6 +1347,13 @@ export default function CustomersPage() {
                           "&:last-child td": {
                             borderBottom: 0,
                           },
+                          /*
+                           * ลูกค้าที่ปิดใช้งานให้จางลง
+                           * เพื่อแยกความแตกต่างจากลูกค้าปกติ
+                           */
+                          opacity: customer.isActive
+                            ? 1
+                            : 0.55,
                         }}
                       >
                         <TableCell>
@@ -1180,6 +1379,22 @@ export default function CustomersPage() {
                             {" · "}
                             {customer.phone || "-"}
                           </Typography>
+
+                          {!customer.isActive && (
+                            <Chip
+                              size="small"
+                              label="ปิดใช้งาน"
+                              sx={{
+                                mt: 0.5,
+                                fontWeight: 800,
+                                fontSize: 10,
+                                height: 18,
+                                borderRadius: "5px",
+                                bgcolor: "#f1f5f9",
+                                color: "#64748b",
+                              }}
+                            />
+                          )}
                         </TableCell>
 
                         <TableCell>
@@ -1292,6 +1507,26 @@ export default function CustomersPage() {
                           </Stack>
                         </TableCell>
 
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={`ซื้อแล้ว ${customer.purchaseCount} ครั้ง`}
+                            sx={{
+                              fontWeight: 800,
+                              fontSize: 11,
+                              borderRadius: "7px",
+                              bgcolor:
+                                customer.purchaseCount > 0
+                                  ? "#16a34a14"
+                                  : "#f4f6f9",
+                              color:
+                                customer.purchaseCount > 0
+                                  ? "#16a34a"
+                                  : "#94a3b8",
+                            }}
+                          />
+                        </TableCell>
+
                         <TableCell align="right">
                           <Typography
                             sx={{
@@ -1361,16 +1596,34 @@ export default function CustomersPage() {
 
                             <IconButton
                               size="small"
-                              aria-label="ลบลูกค้า"
+                              aria-label={
+                                customer.isActive
+                                  ? "ปิดใช้งานลูกค้า"
+                                  : "เปิดใช้งานลูกค้าอีกครั้ง"
+                              }
                               onClick={(event) => {
                                 event.stopPropagation();
-                                setDeleteTarget(
-                                  customer,
-                                );
+                                if (customer.isActive) {
+                                  setDeactivateTarget(
+                                    customer,
+                                  );
+                                } else {
+                                  setReactivateTarget(
+                                    customer,
+                                  );
+                                }
                               }}
-                              sx={{ color: "#dc2626" }}
+                              sx={{
+                                color: customer.isActive
+                                  ? "#dc2626"
+                                  : "#16a34a",
+                              }}
                             >
-                              <DeleteIcon fontSize="small" />
+                              {customer.isActive ? (
+                                <BlockIcon fontSize="small" />
+                              ) : (
+                                <RestoreIcon fontSize="small" />
+                              )}
                             </IconButton>
                           </Stack>
                         </TableCell>
@@ -1381,6 +1634,63 @@ export default function CustomersPage() {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {/* =================================================
+              PAGINATION
+          ================================================== */}
+
+          <TablePagination
+            component="div"
+            data-testid="customers-pagination"
+            count={filtered.length}
+            page={safePage}
+            rowsPerPage={rowsPerPage}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            onPageChange={(_, nextPage) =>
+              setPage(nextPage)
+            }
+            onRowsPerPageChange={(event) => {
+              setRowsPerPage(
+                Number(event.target.value),
+              );
+              setPage(0);
+            }}
+            labelRowsPerPage="แถวต่อหน้า"
+            labelDisplayedRows={({
+              from,
+              to,
+              count,
+            }) =>
+              count === 0
+                ? "ไม่มีรายการ"
+                : `${from}-${to} จากทั้งหมด ${count} รายการ`
+            }
+            getItemAriaLabel={(type) => {
+              switch (type) {
+                case "first":
+                  return "ไปหน้าแรก";
+                case "last":
+                  return "ไปหน้าสุดท้าย";
+                case "next":
+                  return "ไปหน้าถัดไป";
+                default:
+                  return "ไปหน้าก่อนหน้า";
+              }
+            }}
+            sx={{
+              borderTop: "1px solid #eef1f6",
+              flexGrow: 0,
+              "& .MuiTablePagination-toolbar": {
+                minHeight: 56,
+                px: 2,
+              },
+              "& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows":
+                {
+                  fontWeight: 700,
+                  color: "#64748b",
+                },
+            }}
+          />
         </Card>
       </Box>
 
@@ -1519,17 +1829,17 @@ export default function CustomersPage() {
       </Dialog>
 
       {/* =================================================
-          DELETE DIALOG
+          DEACTIVATE DIALOG
       ================================================== */}
 
       <Dialog
-        open={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
+        open={Boolean(deactivateTarget)}
+        onClose={() => setDeactivateTarget(null)}
         maxWidth="xs"
         fullWidth
       >
         <DialogTitle sx={{ fontWeight: 800 }}>
-          ยืนยันการลบ
+          ยืนยันการปิดใช้งาน
         </DialogTitle>
 
         <DialogContent>
@@ -1537,19 +1847,31 @@ export default function CustomersPage() {
             component="div"
             variant="body2"
           >
-            ต้องการลบลูกค้า{" "}
+            ต้องการปิดใช้งานลูกค้า{" "}
             <strong>
-              {deleteTarget?.companyName}
+              {deactivateTarget?.companyName}
             </strong>{" "}
             ใช่หรือไม่?
-            การดำเนินการนี้ไม่สามารถย้อนกลับได้
+          </Typography>
+
+          <Typography
+            component="div"
+            variant="body2"
+            sx={{
+              mt: 1.5,
+              color: "#64748b",
+            }}
+          >
+            ลูกค้าที่ปิดใช้งานจะถูกซ่อนจากหน้าหลัก
+            แต่ข้อมูลยังอยู่ในระบบ
+            และสามารถเปิดใช้งานอีกครั้งได้
           </Typography>
         </DialogContent>
 
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
-            onClick={() => setDeleteTarget(null)}
-            disabled={deleting}
+            onClick={() => setDeactivateTarget(null)}
+            disabled={deactivating}
             sx={{ textTransform: "none" }}
           >
             ยกเลิก
@@ -1558,11 +1880,78 @@ export default function CustomersPage() {
           <Button
             color="error"
             variant="contained"
-            disabled={deleting}
-            onClick={() => void handleDelete()}
+            disabled={deactivating}
+            onClick={() => void handleDeactivate()}
             sx={{ textTransform: "none" }}
           >
-            {deleting ? "กำลังลบ..." : "ลบ"}
+            {deactivating
+              ? "กำลังปิดใช้งาน..."
+              : "ปิดใช้งาน"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* =================================================
+          REACTIVATE DIALOG
+      ================================================== */}
+
+      <Dialog
+        open={Boolean(reactivateTarget)}
+        onClose={() => setReactivateTarget(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 800 }}>
+          ยืนยันการเปิดใช้งานอีกครั้ง
+        </DialogTitle>
+
+        <DialogContent>
+          <Typography
+            component="div"
+            variant="body2"
+          >
+            ต้องการเปิดใช้งานลูกค้า{" "}
+            <strong>
+              {reactivateTarget?.companyName}
+            </strong>{" "}
+            อีกครั้งใช่หรือไม่?
+          </Typography>
+
+          <Typography
+            component="div"
+            variant="body2"
+            sx={{
+              mt: 1.5,
+              color: "#64748b",
+            }}
+          >
+            ลูกค้าจะกลับมาแสดงในหน้าหลัก
+            และกลับไปอยู่ใน Sales Pipeline ตามปกติ
+          </Typography>
+        </DialogContent>
+
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => setReactivateTarget(null)}
+            disabled={reactivating}
+            sx={{ textTransform: "none" }}
+          >
+            ยกเลิก
+          </Button>
+
+          <Button
+            variant="contained"
+            disabled={reactivating}
+            onClick={() => void handleReactivate()}
+            sx={{
+              textTransform: "none",
+              bgcolor: "#16a34a",
+              "&:hover": { bgcolor: "#15803d" },
+            }}
+          >
+            {reactivating
+              ? "กำลังเปิดใช้งาน..."
+              : "เปิดใช้งานอีกครั้ง"}
           </Button>
         </DialogActions>
       </Dialog>

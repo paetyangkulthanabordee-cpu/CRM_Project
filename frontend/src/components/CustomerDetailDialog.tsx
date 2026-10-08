@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
+import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Dialog from "@mui/material/Dialog";
@@ -13,11 +14,13 @@ import Divider from "@mui/material/Divider";
 import IconButton from "@mui/material/IconButton";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
+import Tab from "@mui/material/Tab";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
 
 import CloseIcon from "@mui/icons-material/Close";
@@ -96,6 +99,7 @@ export default function CustomerDetailDialog({
     useState<CustomerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -208,21 +212,41 @@ export default function CustomerDetailDialog({
               {info.companyName}
             </Typography>
 
-            <Chip
-              size="small"
-              sx={{
-                mt: 1,
-                fontWeight: 700,
-                borderRadius: "8px",
-                color: "#ffffff",
-                bgcolor: currentStage
-                  ? currentStage.color
-                  : "#94a3b8",
-              }}
-              label={
-                currentStage?.label ?? info.status
-              }
-            />
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ mt: 1, flexWrap: "wrap" }}
+            >
+              <Chip
+                size="small"
+                sx={{
+                  fontWeight: 700,
+                  borderRadius: "8px",
+                  color: "#ffffff",
+                  bgcolor: currentStage
+                    ? currentStage.color
+                    : "#94a3b8",
+                }}
+                label={
+                  currentStage?.label ?? info.status
+                }
+              />
+
+              {!info.isActive && (
+                <Chip
+                  size="small"
+                  label="ปิดใช้งาน"
+                  sx={{
+                    fontWeight: 800,
+                    fontSize: 11,
+                    borderRadius: "8px",
+                    bgcolor: "#f1f5f9",
+                    color: "#64748b",
+                    border: "1px solid #e2e8f0",
+                  }}
+                />
+              )}
+            </Stack>
           </Box>
 
           <IconButton
@@ -247,20 +271,44 @@ export default function CustomerDetailDialog({
           </Alert>
         )}
 
-        <Divider sx={{ mb: 3 }} />
+        <Divider sx={{ mb: 2 }} />
 
-        {/* ---- info + totals ---- */}
-        <Box
+        <Tabs
+          value={tab}
+          onChange={(_, next) => setTab(next)}
+          variant="scrollable"
+          scrollButtons="auto"
           sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "1fr 1fr",
+            mb: 2.5,
+            borderBottom: "1px solid #eef1f6",
+            "& .MuiTab-root": {
+              minHeight: 44,
+              px: 2,
+              fontWeight: 700,
+              fontSize: 14,
+              color: "#64748b",
+              textTransform: "none",
             },
-            gap: 3,
-            mb: 3,
           }}
         >
+          <Tab label="ข้อมูลติดต่อ" />
+          <Tab label="สรุปยอดเอกสาร" />
+          <Tab
+            label={
+              <Badge
+                badgeContent={
+                  loading ? 0 : (detail?.documents.length ?? 0)
+                }
+                color="primary"
+              >
+                เอกสาร
+              </Badge>
+            }
+          />
+        </Tabs>
+
+        {/* ---- tab 0: ข้อมูลติดต่อ ---- */}
+        {tab === 0 && (
           <Box>
             <Typography
               sx={{
@@ -272,7 +320,13 @@ export default function CustomerDetailDialog({
               ข้อมูลติดต่อ
             </Typography>
 
-            <Stack spacing={1.25}>
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                gap: 2,
+              }}
+            >
               <Box>
                 <Typography
                   variant="caption"
@@ -356,6 +410,28 @@ export default function CustomerDetailDialog({
                   variant="caption"
                   sx={{ color: "#94a3b8" }}
                 >
+                  จำนวนการซื้อ
+                </Typography>
+
+                <Typography
+                  sx={{
+                    fontWeight: 700,
+                    color:
+                      (info.purchaseCount ?? 0) > 0
+                        ? "#16a34a"
+                        : "#1a2233",
+                  }}
+                >
+                  ซื้อแล้ว{" "}
+                  {info.purchaseCount ?? 0} ครั้ง
+                </Typography>
+              </Box>
+
+              <Box>
+                <Typography
+                  variant="caption"
+                  sx={{ color: "#94a3b8" }}
+                >
                   เพิ่มเมื่อ
                 </Typography>
 
@@ -368,9 +444,12 @@ export default function CustomerDetailDialog({
                   {formatDate(info.createdAt)}
                 </Typography>
               </Box>
-            </Stack>
+            </Box>
           </Box>
+        )}
 
+        {/* ---- tab 1: สรุปยอดเอกสาร ---- */}
+        {tab === 1 && (
           <Box>
             <Typography
               sx={{
@@ -456,24 +535,26 @@ export default function CustomerDetailDialog({
               </Stack>
             )}
           </Box>
-        </Box>
+        )}
 
-        {/* ---- documents ---- */}
-        <Typography
-          sx={{
-            fontWeight: 800,
-            color: "#172033",
-            mb: 1.5,
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-          }}
-        >
-          <DescriptionIcon fontSize="small" />
-          เอกสารทั้งหมดของลูกค้า
-        </Typography>
+        {/* ---- tab 2: เอกสาร ---- */}
+        {tab === 2 && (
+          <Box>
+            <Typography
+              sx={{
+                fontWeight: 800,
+                color: "#172033",
+                mb: 1.5,
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+              }}
+            >
+              <DescriptionIcon fontSize="small" />
+              เอกสารทั้งหมดของลูกค้า
+            </Typography>
 
-        {loading ? (
+            {loading ? (
           <Stack spacing={1}>
             {[0, 1, 2].map((row) => (
               <Skeleton
@@ -623,6 +704,8 @@ export default function CustomerDetailDialog({
             >
               ยังไม่มีเอกสารของลูกค้ารายนี้
             </Typography>
+          </Box>
+        )}
           </Box>
         )}
       </DialogContent>

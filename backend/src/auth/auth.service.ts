@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
 
 import { PermissionsService } from '../permissions/permissions.service.js';
 import { UsersService } from '../users/users.service.js';
@@ -24,7 +25,12 @@ export class AuthService {
       );
     }
 
-    if (user.password !== password) {
+    if (
+      !(await bcrypt.compare(
+        password,
+        user.password,
+      ))
+    ) {
       throw new UnauthorizedException(
         'Email หรือ Password ไม่ถูกต้อง',
       );

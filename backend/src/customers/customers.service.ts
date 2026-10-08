@@ -7,6 +7,8 @@ import {
 } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import type { EntityManager } from 'typeorm';
+
 import { PipelineStagesService } from '../pipeline-stages/pipeline-stages.service.js';
 import { Customer } from './entities/customer.entity.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
@@ -29,6 +31,14 @@ export class CustomersService {
         'assigned',
       )
       .orderBy('customer.createdAt', 'DESC');
+
+    /*
+     * ค่าเริ่มต้นซ่อนลูกค้าที่ปิดใช้งาน
+     * ต้องขอรวมด้วย includeInactive เท่านั้น
+     */
+    if (!query.includeInactive) {
+      builder.andWhere('customer.isActive = true');
+    }
 
     if (query.status) {
       builder.andWhere('customer.status = :status', {
@@ -88,6 +98,35 @@ export class CustomersService {
     }
   }
 
+  /*
+   * จำนวนการซื้อ = ใบเสร็จรับเงินที่สำเร็จ (ไม่รวมที่ถูก void)
+   * คำนวณใหม่ทั้งหมดทุกครั้งที่เอกสารของลูกค้าเปลี่ยน
+   */
+  async recalcPurchaseCount(
+    customerId: number,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const executor =
+      manager ?? this.customersRepository.manager;
+
+    const rows: { purchaseCount: number }[] =
+      await executor.query(
+        `UPDATE customers c
+         SET purchase_count = (
+           SELECT COUNT(*)::int
+           FROM documents d
+           WHERE d.customer_id = c.customer_id
+             AND d.doc_type = 'receipt'
+             AND d.status = 'completed'
+         )
+         WHERE c.customer_id = $1
+         RETURNING purchase_count`,
+        [customerId],
+      );
+
+    return Number(rows[0]?.purchaseCount ?? 0);
+  }
+
   async create(
     dto: CreateCustomerDto,
     assignedId?: number,
@@ -132,11 +171,41 @@ export class CustomersService {
     return this.customersRepository.save(customer);
   }
 
-  async remove(customerId: number) {
+  /*
+   * ปิดใช้งานลูกค้า (soft delete)
+   * ข้อมูลยังอยู่ในระบบ แค่ถูกซ่อนจากหน้าหลัก
+   * และเปิดใช้งานอีกครั้งได้ผ่าน restore()
+   */
+  async deactivate(customerId: number) {
     const customer = await this.findOne(customerId);
 
-    await this.customersRepository.remove(customer);
+    customer.isActive = false;
 
-    return { customerId, deleted: true };
+    const saved =
+      await this.customersRepository.save(customer);
+
+    return {
+      customerId: saved.customerId,
+      isActive: saved.isActive,
+      deactivated: true,
+    };
+  }
+
+  /*
+   * เปิดใช้งานลูกค้าที่ปิดไว้กลับมา
+   */
+  async restore(customerId: number) {
+    const customer = await this.findOne(customerId);
+
+    customer.isActive = true;
+
+    const saved =
+      await this.customersRepository.save(customer);
+
+    return {
+      customerId: saved.customerId,
+      isActive: saved.isActive,
+      restored: true,
+    };
   }
 }

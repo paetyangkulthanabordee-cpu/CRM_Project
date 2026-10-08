@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 
 import type { EntityManager } from 'typeorm';
 
+import { CustomersService } from '../customers/customers.service.js';
 import { Customer } from '../customers/entities/customer.entity.js';
 import { User } from '../users/entities/user.entity.js';
 
@@ -33,6 +34,7 @@ export class DocumentsService {
     private readonly documentsRepository: Repository<DocumentRecord>,
     @InjectRepository(Customer)
     private readonly customersRepository: Repository<Customer>,
+    private readonly customersService: CustomersService,
   ) {}
 
   async findAll(query: ListDocumentsDto) {
@@ -247,6 +249,11 @@ export class DocumentsService {
             );
           }
 
+          await this.customersService.recalcPurchaseCount(
+            dto.customerId,
+            manager,
+          );
+
           return created;
         },
       );
@@ -280,10 +287,29 @@ export class DocumentsService {
       ),
     );
 
+    const previousCustomerId = doc.customerId;
+
     Object.assign(doc, changes);
 
     const saved =
       await this.documentsRepository.save(doc);
+
+    const affectedCustomerIds =
+      new Set<number>();
+
+    if (previousCustomerId !== null) {
+      affectedCustomerIds.add(previousCustomerId);
+    }
+
+    if (doc.customerId !== null) {
+      affectedCustomerIds.add(doc.customerId);
+    }
+
+    for (const customerId of affectedCustomerIds) {
+      await this.customersService.recalcPurchaseCount(
+        customerId,
+      );
+    }
 
     return this.findOne(saved.docId);
   }
@@ -299,7 +325,15 @@ export class DocumentsService {
       );
     }
 
+    const customerId = doc.customerId;
+
     await this.documentsRepository.remove(doc);
+
+    if (customerId !== null) {
+      await this.customersService.recalcPurchaseCount(
+        customerId,
+      );
+    }
 
     return { docId, deleted: true };
   }

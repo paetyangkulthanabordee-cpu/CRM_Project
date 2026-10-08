@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { CustomersModule } from '../customers/customers.module.js';
 import { Customer } from '../customers/entities/customer.entity.js';
 import { User } from '../users/entities/user.entity.js';
 import { DocumentsController } from './documents.controller.js';
@@ -10,6 +11,7 @@ import { DocumentSequence } from './entities/document-sequence.entity.js';
 
 @Module({
   imports: [
+    CustomersModule,
     TypeOrmModule.forFeature([
       DocumentRecord,
       DocumentSequence,
