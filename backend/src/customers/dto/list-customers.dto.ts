@@ -1,5 +1,6 @@
 import {
   IsBoolean,
+  IsInt,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -13,11 +14,19 @@ export class ListCustomersDto {
   @IsString()
   search?: string;
 
+  @IsOptional()
+  @IsInt()
+  page?: number;
+
+  @IsOptional()
+  @IsInt()
+  limit?: number;
+
   /*
-   * true = รวมลูกค้าที่ปิดใช้งานด้วย
+   * true = แสดงเฉพาะลูกค้าที่ปิดใช้งาน
    * ไม่ส่งมาหรือ false = แสดงเฉพาะลูกค้าที่ใช้งานอยู่
    */
   @IsOptional()
   @IsBoolean()
-  includeInactive?: boolean;
+  onlyInactive?: boolean;
 }

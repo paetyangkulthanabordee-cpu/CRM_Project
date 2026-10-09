@@ -38,4 +38,12 @@ export class ListDocumentsDto {
     message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
   })
   to?: string;
+
+  @IsOptional()
+  @IsInt()
+  page?: number;
+
+  @IsOptional()
+  @IsInt()
+  limit?: number;
 }

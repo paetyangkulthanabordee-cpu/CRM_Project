@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
+
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -12,12 +15,9 @@ import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-
 import DashboardSidebar from "@/components/DashboardSidebar";
 
-import { api, getErrorMessage } from "@/lib/api";
+import { useApi } from "@/lib/swr";
 
 import { useSession } from "@/lib/useSession";
 
@@ -35,45 +35,23 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user, permissions, ready } = useSession();
 
-  const [data, setData] =
-    useState<DashboardData | null>(null);
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response =
-        await api.get<DashboardData>("/dashboard");
-
-      setData(response.data);
-    } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "ไม่สามารถโหลดข้อมูล Dashboard ได้",
-        ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    data: dashboardData,
+    isLoading: loading,
+    error: errorData,
+    mutate: refreshDashboard,
+  } = useApi<DashboardData>(
+    ready && user ? "/api/dashboard" : null,
+  );
 
   useEffect(() => {
-    if (!ready) {
-      return;
+    if (errorData && !dashboardData) {
+      const status = (errorData as { status?: number }).status;
+      if (status === 401 || status === 403) {
+        router.replace("/login");
+      }
     }
-
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
-
-    void Promise.resolve().then(() => loadDashboard());
-  }, [ready, user, router, loadDashboard]);
+  }, [errorData, dashboardData, router]);
 
 /* =====================================================
      AUTH CHECK
@@ -83,7 +61,7 @@ export default function DashboardPage() {
     return null;
   }
 
-  const showSkeleton = !data;
+  const showSkeleton = !dashboardData;
 
   /* =====================================================
      DEFAULT PERMISSIONS
@@ -104,10 +82,10 @@ export default function DashboardPage() {
         user.role === "ADMIN",
     };
 
-  const kpis = data?.kpis;
-  const stages = data?.stages ?? [];
+  const kpis = dashboardData?.kpis;
+  const stages = dashboardData?.stages ?? [];
   const recentCustomers =
-    data?.recentCustomers ?? [];
+    dashboardData?.recentCustomers ?? [];
 
   const kpiCards = [
     {
@@ -173,6 +151,8 @@ export default function DashboardPage() {
         sx={{
           flex: 1,
           minWidth: 0,
+          overflowY: "auto",
+          maxHeight: "100vh",
           p: {
             xs: 2,
             md: 4,
@@ -263,7 +243,7 @@ export default function DashboardPage() {
             variant="outlined"
             size="small"
             disabled={loading}
-            onClick={() => void loadDashboard()}
+            onClick={() => void refreshDashboard()}
             sx={{ textTransform: "none" }}
           >
             {loading
@@ -276,7 +256,7 @@ export default function DashboardPage() {
             ERROR
         ================================================== */}
 
-        {error && (
+        {errorData && (
           <Box
             sx={{
               mb: 3,
@@ -296,13 +276,13 @@ export default function DashboardPage() {
               variant="body2"
               sx={{ color: "#b91c1c", fontWeight: 700 }}
             >
-              {error}
+              ไม่สามารถโหลดข้อมูล Dashboard ได้
             </Typography>
 
             <Button
               size="small"
               variant="contained"
-              onClick={() => void loadDashboard()}
+              onClick={() => void refreshDashboard()}
               sx={{ textTransform: "none" }}
             >
               ลองใหม่
@@ -322,8 +302,8 @@ export default function DashboardPage() {
               sm: "repeat(2, 1fr)",
               xl: "repeat(5, 1fr)",
             },
-            gap: 2,
-            mb: 3,
+            gap: 3,
+            mb: 4,
           }}
         >
           {kpiCards.map((card) => (

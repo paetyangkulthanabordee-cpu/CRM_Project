@@ -34,9 +34,11 @@ export class CustomersService {
 
     /*
      * ค่าเริ่มต้นซ่อนลูกค้าที่ปิดใช้งาน
-     * ต้องขอรวมด้วย includeInactive เท่านั้น
+     * ต้องขอเฉพาะ inactive ด้วย onlyInactive เท่านั้น
      */
-    if (!query.includeInactive) {
+    if (query.onlyInactive) {
+      builder.andWhere('customer.isActive = false');
+    } else {
       builder.andWhere('customer.isActive = true');
     }
 
@@ -53,7 +55,15 @@ export class CustomersService {
       );
     }
 
-    return builder.getMany();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+
+    const [data, total] = await builder
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { data, total, page, limit };
   }
 
   async findOne(customerId: number) {
@@ -125,6 +135,25 @@ export class CustomersService {
       );
 
     return Number(rows[0]?.purchaseCount ?? 0);
+  }
+
+  async recalcPurchaseCountBatch(customerIds: number[]) {
+    if (customerIds.length === 0) {
+      return;
+    }
+
+    await this.customersRepository.query(
+      `UPDATE customers c
+       SET purchase_count = (
+         SELECT COUNT(*)::int
+         FROM documents d
+         WHERE d.customer_id = c.customer_id
+           AND d.doc_type = 'receipt'
+           AND d.status = 'completed'
+       )
+       WHERE c.customer_id = ANY($1::int[])`,
+      [customerIds],
+    );
   }
 
   async create(

@@ -20,6 +20,7 @@ import Typography from "@mui/material/Typography";
 import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { useApi } from "@/lib/swr";
 
 import { updatePermissions } from "@/lib/auth";
 import type { Permissions } from "@/lib/auth";
@@ -129,38 +130,29 @@ export default function PermissionsPage() {
   const router = useRouter();
   const { user, permissions, ready } = useSession();
 
-  const [matrix, setMatrix] = useState<Matrix>({});
-  const [baseline, setBaseline] =
-    useState<Matrix>({});
-  const [loading, setLoading] = useState(true);
+  const {
+    data: matrixData,
+    isLoading: loading,
+  } = useApi<Matrix>(
+    ready && user && permissions?.administration === true
+      ? "/api/permissions"
+      : null,
+  );
+
+  const [savedMatrix, setSavedMatrix] = useState<Matrix>({});
+
+  const matrix = useMemo(
+    () => savedMatrix,
+    [savedMatrix],
+  );
+  const baseline = matrixData ?? {};
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [noticeType, setNoticeType] = useState<"success" | "error">("success");
 
-  const canManage =
-    permissions?.administration === true;
-
-  const loadMatrix = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response =
-        await api.get<Matrix>("/permissions");
-
-      setMatrix(response.data);
-      setBaseline(response.data);
-    } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "ไม่สามารถโหลดข้อมูลสิทธิ์ได้",
-        ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const canManage = permissions?.administration === true;
 
   useEffect(() => {
     if (!ready) {
@@ -171,45 +163,14 @@ export default function PermissionsPage() {
       router.replace("/login");
       return;
     }
-
-    if (permissions === null) {
-      return;
-    }
-
-    if (permissions.administration !== true) {
-      return;
-    }
-
-    void Promise.resolve().then(() => loadMatrix());
-  }, [
-    ready,
-    user,
-    permissions,
-    router,
-    loadMatrix,
-  ]);
-
-  const dirty = useMemo(() => {
-    if (loading) {
-      return false;
-    }
-
-    return ROLES.filter((item) => item.editable).some(
-      ({ role }) =>
-        MODULES.some(
-          (module) =>
-            matrix[role]?.[module.key] !==
-            baseline[role]?.[module.key],
-        ),
-    );
-  }, [matrix, baseline, loading]);
+  }, [ready, user, router]);
 
   function toggle(
     role: UserRole,
     key: ModuleKey,
     value: boolean,
   ) {
-    setMatrix((current) => ({
+    setSavedMatrix((current) => ({
       ...current,
       [role]: {
         ...(current[role] ?? {}),
@@ -239,8 +200,7 @@ export default function PermissionsPage() {
           payload,
         );
 
-      setMatrix(response.data);
-      setBaseline(response.data);
+      setSavedMatrix(response.data);
 
       if (user) {
         updatePermissions(
@@ -265,6 +225,29 @@ export default function PermissionsPage() {
       setSaving(false);
     }
   }
+
+  const dirty = useMemo(() => {
+    if (loading) {
+      return false;
+    }
+
+    return ROLES.filter((item) => item.editable).some(
+      ({ role }) =>
+        MODULES.some(
+          (module) =>
+            matrix[role]?.[module.key] !==
+            baseline[role]?.[module.key],
+        ),
+    );
+  }, [matrix, baseline, loading]);
+
+  const showNotice = useCallback(
+    (message: string, type: "success" | "error") => {
+      setNotice(message);
+      setNoticeType(type);
+    },
+    [],
+  );
 
   if (!user) {
     return (
@@ -311,6 +294,8 @@ export default function PermissionsPage() {
         sx={{
           flex: 1,
           minWidth: 0,
+          overflowY: "auto",
+          maxHeight: "100vh",
           p: { xs: 2, md: 4 },
         }}
       >

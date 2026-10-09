@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
-import Badge from "@mui/material/Badge";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Dialog from "@mui/material/Dialog";
@@ -15,16 +14,15 @@ import IconButton from "@mui/material/IconButton";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
 import Tab from "@mui/material/Tab";
+import Tabs from "@mui/material/Tabs";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
-import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
 
 import CloseIcon from "@mui/icons-material/Close";
-import DescriptionIcon from "@mui/icons-material/Description";
 
 import { api, getErrorMessage } from "@/lib/api";
 
@@ -109,10 +107,10 @@ export default function CustomerDetailDialog({
       const [customerRes, docsRes] =
         await Promise.all([
           api.get<Customer>(
-            `/customers/${customer.customerId}`,
+            `/api/customers/${customer.customerId}`,
           ),
           api.get<DocumentItem[]>(
-            "/documents",
+            "/api/documents",
             {
               params: {
                 customerId: customer.customerId,
@@ -212,41 +210,21 @@ export default function CustomerDetailDialog({
               {info.companyName}
             </Typography>
 
-            <Stack
-              direction="row"
-              spacing={0.75}
-              sx={{ mt: 1, flexWrap: "wrap" }}
-            >
-              <Chip
-                size="small"
-                sx={{
-                  fontWeight: 700,
-                  borderRadius: "8px",
-                  color: "#ffffff",
-                  bgcolor: currentStage
-                    ? currentStage.color
-                    : "#94a3b8",
-                }}
-                label={
-                  currentStage?.label ?? info.status
-                }
-              />
-
-              {!info.isActive && (
-                <Chip
-                  size="small"
-                  label="ปิดใช้งาน"
-                  sx={{
-                    fontWeight: 800,
-                    fontSize: 11,
-                    borderRadius: "8px",
-                    bgcolor: "#f1f5f9",
-                    color: "#64748b",
-                    border: "1px solid #e2e8f0",
-                  }}
-                />
-              )}
-            </Stack>
+            <Chip
+              size="small"
+              sx={{
+                mt: 1,
+                fontWeight: 700,
+                borderRadius: "8px",
+                color: "#ffffff",
+                bgcolor: currentStage
+                  ? currentStage.color
+                  : "#94a3b8",
+              }}
+              label={
+                currentStage?.label ?? info.status
+              }
+            />
           </Box>
 
           <IconButton
@@ -293,23 +271,119 @@ export default function CustomerDetailDialog({
         >
           <Tab label="ข้อมูลติดต่อ" />
           <Tab label="สรุปยอดเอกสาร" />
-          <Tab
-            label={
-              <Badge
-                badgeContent={
-                  loading ? 0 : (detail?.documents.length ?? 0)
-                }
-                color="primary"
-              >
-                เอกสาร
-              </Badge>
-            }
-          />
+          <Tab label="เอกสาร" />
         </Tabs>
 
-        {/* ---- tab 0: ข้อมูลติดต่อ ---- */}
         {tab === 0 && (
           <Box>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "1fr 1fr",
+              },
+              gap: 2,
+            }}
+          >
+            <Box>
+              <Typography
+                variant="caption"
+                sx={{ color: "#94a3b8" }}
+              >
+                อีเมล
+              </Typography>
+
+              <Typography
+                sx={{
+                  fontWeight: 700,
+                  color: "#1a2233",
+                }}
+              >
+                {info.email || "-"}
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography
+                variant="caption"
+                sx={{ color: "#94a3b8" }}
+              >
+                เบอร์โทร
+              </Typography>
+
+              <Typography
+                sx={{
+                  fontWeight: 700,
+                  color: "#1a2233",
+                }}
+              >
+                {info.phone || "-"}
+              </Typography>
+            </Box>
+
+            <Box>
+              <Typography
+                variant="caption"
+                sx={{ color: "#94a3b8" }}
+              >
+                Sales ผู้รับผิดชอบ
+              </Typography>
+
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
+                <Avatar
+                  sx={{
+                    width: 26,
+                    height: 26,
+                    fontSize: 11,
+                    fontWeight: 800,
+                    bgcolor: "#e8f1ff",
+                    color: "#1d4ed8",
+                  }}
+                >
+                  {info.assignedUser?.name
+                    ? initials(info.assignedUser.name)
+                    : "?"}
+                </Avatar>
+
+                <Typography
+                  sx={{
+                    fontWeight: 700,
+                    color: "#1a2233",
+                  }}
+                >
+                  {info.assignedUser?.name ??
+                    "ยังไม่ระบุ"}
+                </Typography>
+              </Box>
+            </Box>
+
+            <Box>
+              <Typography
+                variant="caption"
+                sx={{ color: "#94a3b8" }}
+              >
+                เพิ่มเมื่อ
+              </Typography>
+
+              <Typography
+                sx={{
+                  fontWeight: 700,
+                  color: "#1a2233",
+                }}
+              >
+                {formatDate(info.createdAt)}
+              </Typography>
+            </Box>
+          </Box>
+
+          <Box sx={{ mt: 3 }}>
             <Typography
               sx={{
                 fontWeight: 800,
@@ -317,150 +391,50 @@ export default function CustomerDetailDialog({
                 mb: 1.5,
               }}
             >
-              ข้อมูลติดต่อ
+              จำนวนซื้อ
             </Typography>
 
             <Box
               sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                px: 1.75,
+                py: 1.25,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
                 gap: 2,
+                bgcolor: "#fafcff",
+                border: "1px solid #eef1f6",
+                borderRadius: "10px",
               }}
             >
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "#94a3b8" }}
-                >
-                  อีเมล
-                </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 700,
+                  color: "#475569",
+                }}
+              >
+                ซื้อแล้วทั้งหมด
+              </Typography>
 
-                <Typography
-                  sx={{
-                    fontWeight: 700,
-                    color: "#1a2233",
-                  }}
-                >
-                  {info.email || "-"}
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "#94a3b8" }}
-                >
-                  เบอร์โทร
-                </Typography>
-
-                <Typography
-                  sx={{
-                    fontWeight: 700,
-                    color: "#1a2233",
-                  }}
-                >
-                  {info.phone || "-"}
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "#94a3b8" }}
-                >
-                  Sales ผู้รับผิดชอบ
-                </Typography>
-
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                  }}
-                >
-                  <Avatar
-                    sx={{
-                      width: 26,
-                      height: 26,
-                      fontSize: 11,
-                      fontWeight: 800,
-                      bgcolor: "#e8f1ff",
-                      color: "#1d4ed8",
-                    }}
-                  >
-                    {info.assignedUser?.name
-                      ? initials(info.assignedUser.name)
-                      : "?"}
-                  </Avatar>
-
-                  <Typography
-                    sx={{
-                      fontWeight: 700,
-                      color: "#1a2233",
-                    }}
-                  >
-                    {info.assignedUser?.name ??
-                      "ยังไม่ระบุ"}
-                  </Typography>
-                </Box>
-              </Box>
-
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "#94a3b8" }}
-                >
-                  จำนวนการซื้อ
-                </Typography>
-
-                <Typography
-                  sx={{
-                    fontWeight: 700,
-                    color:
-                      (info.purchaseCount ?? 0) > 0
-                        ? "#16a34a"
-                        : "#1a2233",
-                  }}
-                >
-                  ซื้อแล้ว{" "}
-                  {info.purchaseCount ?? 0} ครั้ง
-                </Typography>
-              </Box>
-
-              <Box>
-                <Typography
-                  variant="caption"
-                  sx={{ color: "#94a3b8" }}
-                >
-                  เพิ่มเมื่อ
-                </Typography>
-
-                <Typography
-                  sx={{
-                    fontWeight: 700,
-                    color: "#1a2233",
-                  }}
-                >
-                  {formatDate(info.createdAt)}
-                </Typography>
-              </Box>
+              <Typography
+                sx={{
+                  fontWeight: 800,
+                  color:
+                    (info.purchaseCount ?? 0) > 0
+                      ? "#16a34a"
+                      : "#94a3b8",
+                }}
+              >
+                {info.purchaseCount ?? 0} ครั้ง
+              </Typography>
             </Box>
+          </Box>
           </Box>
         )}
 
-        {/* ---- tab 1: สรุปยอดเอกสาร ---- */}
         {tab === 1 && (
           <Box>
-            <Typography
-              sx={{
-                fontWeight: 800,
-                color: "#172033",
-                mb: 1.5,
-              }}
-            >
-              สรุปยอดเอกสาร
-            </Typography>
-
             {loading ? (
               <Stack spacing={1}>
                 {[0, 1, 2, 3].map((row) => (
@@ -537,175 +511,160 @@ export default function CustomerDetailDialog({
           </Box>
         )}
 
-        {/* ---- tab 2: เอกสาร ---- */}
         {tab === 2 && (
           <Box>
-            <Typography
-              sx={{
-                fontWeight: 800,
-                color: "#172033",
-                mb: 1.5,
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-              }}
-            >
-              <DescriptionIcon fontSize="small" />
-              เอกสารทั้งหมดของลูกค้า
-            </Typography>
-
             {loading ? (
-          <Stack spacing={1}>
-            {[0, 1, 2].map((row) => (
-              <Skeleton
-                key={row}
-                height={44}
-              />
-            ))}
-          </Stack>
-        ) : detail &&
-          detail.documents.length > 0 ? (
-          <Box
-            sx={{
-              border: "1px solid #e7ebf2",
-              borderRadius: "12px",
-              overflow: "hidden",
-            }}
-          >
-            <Table size="small">
-              <TableHead>
-                <TableRow
-                  sx={{ bgcolor: "#fafcff" }}
-                >
-                  {[
-                    "เลขที่",
-                    "ประเภท",
-                    "วันที่",
-                    "ยอดรวม",
-                    "สถานะ",
-                  ].map((head) => (
-                    <TableCell
-                      key={head}
-                      sx={{
-                        fontWeight: 800,
-                        color: "#475569",
-                        py: 1.25,
-                      }}
+              <Stack spacing={1}>
+                {[0, 1, 2].map((row) => (
+                  <Skeleton
+                    key={row}
+                    height={44}
+                  />
+                ))}
+              </Stack>
+            ) : detail &&
+              detail.documents.length > 0 ? (
+              <Box
+                sx={{
+                  border: "1px solid #e7ebf2",
+                  borderRadius: "12px",
+                  overflow: "hidden",
+                }}
+              >
+                <Table size="small">
+                  <TableHead>
+                    <TableRow
+                      sx={{ bgcolor: "#fafcff" }}
                     >
-                      {head}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              </TableHead>
-
-              <TableBody>
-                {detail.documents.map((doc) => (
-                  <TableRow key={doc.docId} hover>
-                    <TableCell>
-                      <Typography
-                        sx={{
-                          fontWeight: 800,
-                          color: "#2563eb",
-                          fontSize: 13,
-                        }}
-                      >
-                        {doc.docNo}
-                      </Typography>
-
-                      {doc.refDocNo && (
-                        <Typography
-                          variant="caption"
+                      {[
+                        "เลขที่",
+                        "ประเภท",
+                        "วันที่",
+                        "ยอดรวม",
+                        "สถานะ",
+                      ].map((head) => (
+                        <TableCell
+                          key={head}
                           sx={{
-                            display: "block",
-                            color: "#94a3b8",
+                            fontWeight: 800,
+                            color: "#475569",
+                            py: 1.25,
                           }}
                         >
-                          อ้างอิง: {doc.refDocNo}
-                        </Typography>
-                      )}
-                    </TableCell>
+                          {head}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
 
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 700,
-                          color: "#475569",
-                        }}
-                      >
-                        {
-                          DOC_TYPE_LABELS_TH[
-                            doc.docType
-                          ]
-                        }
-                      </Typography>
-                    </TableCell>
+                  <TableBody>
+                    {detail.documents.map((doc) => (
+                      <TableRow key={doc.docId} hover>
+                        <TableCell>
+                          <Typography
+                            sx={{
+                              fontWeight: 800,
+                              color: "#2563eb",
+                              fontSize: 13,
+                            }}
+                          >
+                            {doc.docNo}
+                          </Typography>
 
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        sx={{ color: "#475569" }}
-                      >
-                        {formatDate(doc.issueDate)}
-                      </Typography>
-                    </TableCell>
+                          {doc.refDocNo && (
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                display: "block",
+                                color: "#94a3b8",
+                              }}
+                            >
+                              อ้างอิง: {doc.refDocNo}
+                            </Typography>
+                          )}
+                        </TableCell>
 
-                    <TableCell align="right">
-                      <Typography
-                        sx={{
-                          fontWeight: 800,
-                          color: "#0f172a",
-                        }}
-                      >
-                        {formatBaht(doc.amount)}
-                      </Typography>
-                    </TableCell>
+                        <TableCell>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: 700,
+                              color: "#475569",
+                            }}
+                          >
+                            {
+                              DOC_TYPE_LABELS_TH[
+                                doc.docType
+                              ]
+                            }
+                          </Typography>
+                        </TableCell>
 
-                    <TableCell>
-                      <Chip
-                        size="small"
-                        label={
-                          DOC_STATUS_LABELS[
-                            doc.status
-                          ] ?? doc.status
-                        }
-                        sx={{
-                          fontWeight: 700,
-                          borderRadius: "8px",
-                          fontSize: 11,
-                          color:
-                            DOC_STATUS_STYLES[
-                              doc.status
-                            ]?.fg ?? "#475569",
-                          bgcolor:
-                            DOC_STATUS_STYLES[
-                              doc.status
-                            ]?.bg ?? "#f1f5f9",
-                        }}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Box>
-        ) : (
-          <Box
-            sx={{
-              py: 5,
-              textAlign: "center",
-              border: "1px dashed #d7dee8",
-              borderRadius: "12px",
-            }}
-          >
-            <Typography
-              variant="body2"
-              sx={{ color: "#94a3b8" }}
-            >
-              ยังไม่มีเอกสารของลูกค้ารายนี้
-            </Typography>
-          </Box>
-        )}
+                        <TableCell>
+                          <Typography
+                            variant="body2"
+                            sx={{ color: "#475569" }}
+                          >
+                            {formatDate(doc.issueDate)}
+                          </Typography>
+                        </TableCell>
+
+                        <TableCell align="right">
+                          <Typography
+                            sx={{
+                              fontWeight: 800,
+                              color: "#0f172a",
+                            }}
+                          >
+                            {formatBaht(doc.amount)}
+                          </Typography>
+                        </TableCell>
+
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={
+                              DOC_STATUS_LABELS[
+                                doc.status
+                              ] ?? doc.status
+                            }
+                            sx={{
+                              fontWeight: 700,
+                              borderRadius: "8px",
+                              fontSize: 11,
+                              color:
+                                DOC_STATUS_STYLES[
+                                  doc.status
+                                ]?.fg ?? "#475569",
+                              bgcolor:
+                                DOC_STATUS_STYLES[
+                                  doc.status
+                                ]?.bg ?? "#f1f5f9",
+                            }}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+            ) : (
+              <Box
+                sx={{
+                  py: 5,
+                  textAlign: "center",
+                  border: "1px dashed #d7dee8",
+                  borderRadius: "12px",
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{ color: "#94a3b8" }}
+                >
+                  ยังไม่มีเอกสารของลูกค้ารายนี้
+                </Typography>
+              </Box>
+            )}
           </Box>
         )}
       </DialogContent>

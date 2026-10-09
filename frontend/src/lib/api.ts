@@ -2,12 +2,11 @@ import axios from "axios";
 
 import { clearAuth, getAccessToken } from "./auth";
 
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:3001/api";
-
 export const api = axios.create({
-  baseURL: API_URL,
+  baseURL: "",
+  headers: {
+    "Cache-Control": "no-cache",
+  },
 });
 
 api.interceptors.request.use((config) => {
@@ -33,16 +32,8 @@ api.interceptors.response.use(
       if (!url.includes("/auth/login")) {
         clearAuth();
 
-        if (
-          window.location.pathname !==
-          "/login"
-        ) {
-          window.history.replaceState(
-            null,
-            "",
-            "/login",
-          );
-          window.location.reload();
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login";
         }
       }
     }

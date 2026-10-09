@@ -91,16 +91,24 @@ export class DocumentsService {
       );
     }
 
-    const { entities, raw } =
-      await builder.getRawAndEntities();
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
 
-    return entities.map((doc, index) =>
+    const { entities, raw } = await builder
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getRawAndEntities();
+
+    const data = entities.map((doc, index) =>
       Object.assign({}, doc, {
-        customerName:
-          raw[index]?.customerName ?? null,
+        customerName: raw[index]?.customerName ?? null,
         creatorName: raw[index]?.creatorName ?? null,
       }),
     );
+
+    const total = await builder.getCount();
+
+    return { data, total, page, limit };
   }
 
   async findOne(docId: number) {
@@ -305,9 +313,9 @@ export class DocumentsService {
       affectedCustomerIds.add(doc.customerId);
     }
 
-    for (const customerId of affectedCustomerIds) {
-      await this.customersService.recalcPurchaseCount(
-        customerId,
+    if (affectedCustomerIds.size > 0) {
+      await this.customersService.recalcPurchaseCountBatch(
+        Array.from(affectedCustomerIds),
       );
     }
 

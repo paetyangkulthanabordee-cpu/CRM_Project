@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type { FormEvent } from "react";
 
@@ -45,6 +40,7 @@ import Typography from "@mui/material/Typography";
 import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { useApi } from "@/lib/swr";
 
 import { useSession } from "@/lib/useSession";
 
@@ -152,11 +148,21 @@ export default function UsersPage() {
   const router = useRouter();
   const { user, permissions, ready } = useSession();
 
-  const [users, setUsers] = useState<
-    UserListItem[]
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const {
+    data: usersData,
+    isLoading: loading,
+    error: loadError,
+    mutate: reloadUsers,
+  } = useApi<UserListItem[]>(
+    ready && user && permissions?.administration === true
+      ? "/api/users"
+      : null,
+  );
+
+  const users = useMemo(
+    () => usersData ?? [],
+    [usersData],
+  );
 
   const [search, setSearch] = useState("");
 
@@ -190,51 +196,9 @@ export default function UsersPage() {
     [],
   );
 
-  const loadUsers = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response =
-        await api.get<UserListItem[]>(
-          "/users",
-        );
-
-      setUsers(response.data);
-    } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "ไม่สามารถโหลดข้อมูลผู้ใช้ได้",
-        ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!ready) {
-      return;
-    }
-
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
-
-    if (permissions?.administration !== true) {
-      return;
-    }
-
-    void Promise.resolve().then(() => loadUsers());
-  }, [
-    ready,
-    user,
-    permissions?.administration,
-    router,
-    loadUsers,
-  ]);
+  if (!user) {
+    router.replace("/login");
+  }
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -339,7 +303,7 @@ export default function UsersPage() {
           "success",
         );
       } else {
-        await api.post("/users", {
+        await api.post("/api/users", {
           name: result.data.name.trim(),
           email: result.data.email.trim(),
           password: result.data.password,
@@ -353,7 +317,7 @@ export default function UsersPage() {
       }
 
       setDialogOpen(false);
-      await loadUsers();
+      await reloadUsers();
     } catch (err) {
       setFormError(
         getErrorMessage(
@@ -383,7 +347,7 @@ export default function UsersPage() {
         "success",
       );
       setDeleteTarget(null);
-      await loadUsers();
+      await reloadUsers();
     } catch (err) {
       showNotice(
         getErrorMessage(
@@ -448,6 +412,8 @@ export default function UsersPage() {
         sx={{
           flex: 1,
           minWidth: 0,
+          overflowY: "auto",
+          maxHeight: "100vh",
           p: { xs: 2, md: 4 },
         }}
       >
@@ -532,13 +498,9 @@ export default function UsersPage() {
           </Alert>
         )}
 
-        {error && (
-          <Alert
-            severity="error"
-            sx={{ mb: 2 }}
-            onClose={() => setError("")}
-          >
-            {error}
+        {loadError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            ไม่สามารถโหลดข้อมูลผู้ใช้ได้
           </Alert>
         )}
 

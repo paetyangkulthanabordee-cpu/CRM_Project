@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { ReactNode } from "react";
-
-import { useRouter } from "next/navigation";
 
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
@@ -39,6 +37,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  closestCorners,
   useDroppable,
   useSensor,
   useSensors,
@@ -59,6 +58,7 @@ import CustomerDetailDialog, {
 import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { useApi } from "@/lib/swr";
 
 import { useSession } from "@/lib/useSession";
 
@@ -586,7 +586,7 @@ function SortableCard({
 }
 
 const CARD_HEIGHT = 128;
-const CARD_GAP = 10;
+const CARD_GAP = 16;
 
 function Column({
   stage,
@@ -770,16 +770,27 @@ function Column({
    ====================================================== */
 
 export default function SalesPipelinePage() {
-  const router = useRouter();
   const { user, permissions, ready } = useSession();
 
-  const [customers, setCustomers] = useState<
-    Customer[]
-  >([]);
-  const [stages, setStages] = useState<
-    PipelineStage[]
-  >([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: customersData,
+    isLoading: loading,
+    mutate: reloadCustomers,
+  } = useApi<{ data: Customer[]; total: number }>(
+    ready && user ? "/api/customers?limit=100" : null,
+  );
+  const { data: stagesData } = useApi<PipelineStage[]>(
+    ready && user ? "/api/pipeline-stages" : null,
+  );
+
+  const customers = useMemo(
+    () => customersData?.data ?? [],
+    [customersData],
+  );
+  const stages = useMemo(
+    () => stagesData ?? [],
+    [stagesData],
+  );
   const [search, setSearch] = useState("");
 
   const [salesFilter, setSalesFilter] = useState<
@@ -804,44 +815,10 @@ export default function SalesPipelinePage() {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 2,
+        distance: 5,
       },
     }),
   );
-
-  const loadCustomers = useCallback(async () => {
-    setLoading(true);
-
-    try {
-      const [customersRes, stagesRes] =
-        await Promise.all([
-          api.get<Customer[]>("/customers"),
-          api.get<PipelineStage[]>(
-            "/pipeline-stages",
-          ),
-        ]);
-
-      setCustomers(customersRes.data);
-      setStages(stagesRes.data);
-    } catch {
-      setCustomers([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!ready) {
-      return;
-    }
-
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
-
-    void Promise.resolve().then(() => loadCustomers());
-  }, [ready, user, router, loadCustomers]);
 
   /*
    * รายการ Sales ที่มีอยู่จริงในบอร์ด
@@ -1072,29 +1049,18 @@ export default function SalesPipelinePage() {
     customerId: number,
     status: string,
   ) {
-    const previous = customers;
-
-    setCustomers((current) =>
-      current.map((customer) =>
-        customer.customerId === customerId
-          ? { ...customer, status }
-          : customer,
-      ),
-    );
-
     try {
       await api.patch(`/customers/${customerId}`, {
         status,
       });
 
-setNotice("อัปเดตสถานะใน Pipeline แล้ว");
+      setNotice("อัปเดตสถานะใน Pipeline แล้ว");
+      await reloadCustomers();
     } catch (err) {
-      setCustomers(previous);
-
       setNotice(
         getErrorMessage(
           err,
-"ไม่พบลูกค้าที่ตรงกับคำค้นหานี้",
+          "ไม่สามารถอัปเดตสถานะได้",
         ),
       );
     }
@@ -1171,9 +1137,9 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
       salesPipeline: true,
       documents: true,
       reports: true,
-      administration: user.role === "ADMIN",
-      permissions: user.role === "ADMIN",
-      auditLogs: user.role === "ADMIN",
+      administration: user?.role === "ADMIN",
+      permissions: user?.role === "ADMIN",
+      auditLogs: user?.role === "ADMIN",
     };
 
   const totalVisible = stages.reduce(
@@ -1182,22 +1148,12 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
     0,
   );
 
-  /*
-   * ระหว่างกรอง แสดงเฉพาะคอลัมน์ที่มีผลลัพธ์
-   * ถ้าไม่เจอเลย แสดงข้อความว่าไม่พบผลลัพธ์
-   */
-  const visibleStages = hasFilter
-    ? stages.filter(
-        (stage) =>
-          (byColumn[stage.stageKey]?.length ?? 0) > 0,
-      )
-    : stages;
-
   return (
     <Box
       sx={{
-        minHeight: "100vh",
+        height: "100vh",
         display: "flex",
+        overflow: "hidden",
         bgcolor: "#f6f8fb",
       }}
     >
@@ -1212,6 +1168,8 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
           flex: 1,
           minWidth: 0,
           p: { xs: 2, md: 4 },
+          overflowX: "hidden",
+          overflowY: "hidden",
         }}
       >
         {/* ---- header ---- */}
@@ -1221,7 +1179,7 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
             display: "flex",
             justifyContent: "space-between",
             alignItems: "flex-start",
-            gap: 2,
+            gap: 3,
             flexWrap: "wrap",
           }}
         >
@@ -1330,7 +1288,7 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
             direction="row"
             spacing={0.75}
             sx={{
-              mb: 2,
+              mb: 3,
               flexWrap: "wrap",
               alignItems: "center",
             }}
@@ -1538,9 +1496,6 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
                   />
                 }
                 label={stage.label}
-                sub={`${
-                  byColumn[stage.stageKey]?.length ?? 0
-                } รายในคอลัมน์นี้`}
               />
             ))}
           </FilterSection>
@@ -1778,6 +1733,7 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
         ) : (
           <DndContext
             sensors={sensors}
+            collisionDetection={closestCorners}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
             onDragCancel={() =>
@@ -1793,7 +1749,7 @@ setNotice("อัปเดตสถานะใน Pipeline แล้ว");
                 alignItems: "flex-start",
               }}
             >
-              {visibleStages.map((stage) => (
+              {stages.map((stage) => (
                 <Column
                   key={stage.stageId}
                   stage={stage}

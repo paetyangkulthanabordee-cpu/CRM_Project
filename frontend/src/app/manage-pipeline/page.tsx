@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 import { useRouter } from "next/navigation";
@@ -45,6 +45,7 @@ import { CSS } from "@dnd-kit/utilities";
 import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { useApi } from "@/lib/swr";
 
 import { useSession } from "@/lib/useSession";
 
@@ -254,12 +255,18 @@ export default function ManagePipelinePage() {
   const router = useRouter();
   const { user, permissions, ready } = useSession();
 
-  const [stages, setStages] = useState<
-    PipelineStage[]
-  >([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: stagesData,
+    isLoading: loading,
+    mutate: reloadStages,
+  } = useApi<PipelineStage[]>(
+    ready && user && permissions?.administration === true
+      ? "/api/pipeline-stages"
+      : null,
+  );
+
+  const stages = stagesData ?? [];
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   const [dialogOpen, setDialogOpen] =
@@ -289,29 +296,6 @@ const [form, setForm] = useState<StageForm>(
     }),
   );
 
-  const loadStages = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response =
-        await api.get<PipelineStage[]>(
-          "/pipeline-stages",
-        );
-
-      setStages(response.data);
-    } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "ไม่สามารถโหลดคอลัมน์ Pipeline ได้",
-        ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     if (!ready) {
       return;
@@ -321,19 +305,7 @@ const [form, setForm] = useState<StageForm>(
       router.replace("/login");
       return;
     }
-
-    if (permissions?.administration !== true) {
-      return;
-    }
-
-    void Promise.resolve().then(() => loadStages());
-  }, [
-    ready,
-    user,
-    permissions?.administration,
-    router,
-    loadStages,
-  ]);
+  }, [ready, user, router]);
 
 function openCreate() {
     setEditing(null);
@@ -393,7 +365,7 @@ function openCreate() {
           "บันทึกการแก้ไขคอลัมน์เรียบร้อยแล้ว",
         );
       } else {
-        await api.post("/pipeline-stages", {
+        await api.post("/api/pipeline-stages", {
           label,
           stageKey,
           color: form.color,
@@ -403,7 +375,7 @@ function openCreate() {
       }
 
       setDialogOpen(false);
-      await loadStages();
+      await reloadStages();
     } catch (err) {
       setFormError(
         getErrorMessage(
@@ -426,40 +398,33 @@ function openCreate() {
     }
 
     const from = stages.findIndex(
-      (stage) => stage.stageId === active.id,
+      (stage) => stage.stageKey === active.id,
     );
     const to = stages.findIndex(
-      (stage) => stage.stageId === over.id,
+      (stage) => stage.stageKey === over.id,
     );
 
     if (from < 0 || to < 0) {
       return;
     }
 
-    const previous = stages;
-    const next = arrayMove(
-      stages,
-      from,
-      to,
-    ).map((stage, index) => ({
-      ...stage,
-      position: index + 1,
-    }));
+    const next = arrayMove(stages, from, to).map(
+      (stage, index) => ({
+        ...stage,
+        position: index + 1,
+      }),
+    );
 
-    setStages(next);
     setSaving(true);
 
     try {
-      await api.patch("/pipeline-stages/order", {
-        stageIds: next.map(
-          (stage) => stage.stageId,
-        ),
+      await api.patch("/api/pipeline-stages/order", {
+        stageIds: next.map((stage) => stage.stageKey),
       });
 
-      await loadStages();
+      await reloadStages();
       setNotice("จัดลำดับคอลัมน์เรียบร้อยแล้ว");
     } catch (err) {
-      setStages(previous);
       setNotice(
         getErrorMessage(
           err,
@@ -487,7 +452,7 @@ function openCreate() {
         `ลบคอลัมน์ "${deleteTarget.label}" แล้ว`,
       );
       setDeleteTarget(null);
-      await loadStages();
+      await reloadStages();
     } catch (err) {
       setNotice(
         getErrorMessage(
@@ -547,6 +512,8 @@ function openCreate() {
         sx={{
           flex: 1,
           minWidth: 0,
+          overflowY: "auto",
+          maxHeight: "100vh",
           p: { xs: 2, md: 4 },
         }}
       >
@@ -631,13 +598,9 @@ function openCreate() {
           </Alert>
         )}
 
-        {error && (
-          <Alert
-            severity="error"
-            sx={{ mb: 2 }}
-            onClose={() => setError("")}
-          >
-            {error}
+        {!loading && stages.length === 0 && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            ยังไม่มีคอลัมน์ในระบบ
           </Alert>
         )}
 
@@ -702,7 +665,7 @@ function openCreate() {
             >
               <SortableContext
                 items={stages.map(
-                  (stage) => stage.stageId,
+                  (stage) => stage.stageKey,
                 )}
                 strategy={
                   verticalListSortingStrategy

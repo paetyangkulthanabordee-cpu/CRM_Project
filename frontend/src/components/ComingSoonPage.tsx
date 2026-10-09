@@ -80,6 +80,8 @@ export default function ComingSoonPage({
         component="main"
         sx={{
           flex: 1,
+          overflowY: "auto",
+          maxHeight: "100vh",
           p: { xs: 2, md: 4 },
         }}
       >

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 
 import { useRouter } from "next/navigation";
@@ -48,6 +48,7 @@ import Typography from "@mui/material/Typography";
 import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { useApi } from "@/lib/swr";
 
 import { useSession } from "@/lib/useSession";
 
@@ -185,15 +186,27 @@ export default function DocumentsPage() {
   const router = useRouter();
   const { user, permissions, ready } = useSession();
 
-  const [docs, setDocs] = useState<DocumentItem[]>([]);
-  const [stats, setStats] =
-    useState<DocumentStats | null>(null);
-  const [customers, setCustomers] = useState<
-    Customer[]
-  >([]);
+  const {
+    data: docsData,
+    isLoading: loading,
+    error: loadError,
+    mutate: reloadDocs,
+  } = useApi<{ data: DocumentItem[]; total: number }>(
+    ready && user ? "/api/documents?limit=100" : null,
+  );
+  const { data: statsData } = useApi<DocumentStats>(
+    ready && user ? "/api/documents/stats" : null,
+  );
+  const { data: customersData } = useApi<{ data: Customer[] }>(
+    ready && user ? "/api/customers?limit=100" : null,
+  );
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const docs = useMemo(
+    () => docsData?.data ?? [],
+    [docsData],
+  );
+  const stats = statsData ?? null;
+  const customers = customersData?.data ?? [];
 
   const [tab, setTab] = useState<DocType>("quotation");
   const [search, setSearch] = useState("");
@@ -231,45 +244,9 @@ export default function DocumentsPage() {
     [],
   );
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      const [docsRes, statsRes, customersRes] =
-        await Promise.all([
-          api.get<DocumentItem[]>("/documents"),
-          api.get<DocumentStats>("/documents/stats"),
-          api.get<Customer[]>("/customers"),
-        ]);
-
-      setDocs(docsRes.data);
-      setStats(statsRes.data);
-      setCustomers(customersRes.data);
-    } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "ไม่สามารถโหลดเอกสารได้",
-        ),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!ready) {
-      return;
-    }
-
-    if (!user) {
-      router.replace("/login");
-      return;
-    }
-
-    void Promise.resolve().then(() => loadAll());
-  }, [ready, user, router, loadAll]);
+  if (!user) {
+    router.replace("/login");
+  }
 
   /* =====================================================
      FILTER
@@ -468,7 +445,7 @@ export default function DocumentsPage() {
           "success",
         );
       } else {
-        await api.post("/documents", {
+        await api.post("/api/documents", {
           docType: result.data.docType,
           customerId: Number(
             result.data.customerId,
@@ -490,7 +467,7 @@ export default function DocumentsPage() {
       }
 
       setDialogOpen(false);
-      await loadAll();
+      await reloadDocs();
     } catch (err) {
       setFormError(
         getErrorMessage(
@@ -542,7 +519,7 @@ export default function DocumentsPage() {
         "success",
       );
       setDeleteTarget(null);
-      await loadAll();
+      await reloadDocs();
     } catch (err) {
       showNotice(
         getErrorMessage(
@@ -639,6 +616,8 @@ export default function DocumentsPage() {
         sx={{
           flex: 1,
           minWidth: 0,
+          overflowY: "auto",
+          maxHeight: "100vh",
           p: { xs: 2, md: 4 },
         }}
       >
@@ -994,13 +973,9 @@ export default function DocumentsPage() {
 
         {/* ERROR */}
 
-        {error && (
-          <Alert
-            severity="error"
-            sx={{ mb: 2 }}
-            onClose={() => setError("")}
-          >
-            {error}
+        {loadError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            ไม่สามารถโหลดเอกสารได้
           </Alert>
         )}
 
