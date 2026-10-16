@@ -18,10 +18,25 @@ import { PermissionsModule } from './permissions/permissions.module.js';
 import { AuditLogsModule } from './audit-logs/audit-logs.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 
+const requiredEnvVars = [
+  'DATABASE_HOST',
+  'DATABASE_PORT',
+  'DATABASE_USERNAME',
+  'DATABASE_PASSWORD',
+  'DATABASE_NAME',
+];
+const missingEnvVars = requiredEnvVars.filter((key) => !process.env[key]);
+if (missingEnvVars.length > 0) {
+  throw new Error(
+    `Missing required environment variables: ${missingEnvVars.join(', ')}`,
+  );
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: ['.env', '.env.local'],
     }),
 
     TypeOrmModule.forRoot({

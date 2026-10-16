@@ -3,7 +3,10 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
 } from 'class-validator';
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export class ListCustomersDto {
   @IsOptional()
@@ -21,6 +24,12 @@ export class ListCustomersDto {
   @IsOptional()
   @IsInt()
   limit?: number;
+
+  @IsOptional()
+  @Matches(DATE_PATTERN, {
+    message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
+  })
+  dateFrom?: string;
 
   /*
    * true = แสดงเฉพาะลูกค้าที่ปิดใช้งาน

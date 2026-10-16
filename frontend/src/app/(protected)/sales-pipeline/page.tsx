@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { ReactNode } from "react";
 
@@ -10,7 +16,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import Checkbox from "@mui/material/Checkbox";
-import Chip from "@mui/material/Chip";
+
 import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import Popover from "@mui/material/Popover";
@@ -27,10 +33,9 @@ import EventBusyIcon from "@mui/icons-material/EventBusy";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
 import HistoryIcon from "@mui/icons-material/History";
 import MailOutlineIcon from "@mui/icons-material/MailOutlined";
-import PersonIcon from "@mui/icons-material/Person";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import PhoneIphoneIcon from "@mui/icons-material/PhoneIphone";
-import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
+
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 import TodayIcon from "@mui/icons-material/Today";
 import {
@@ -38,9 +43,17 @@ import {
   DragOverlay,
   PointerSensor,
   closestCorners,
+  pointerWithin,
+  rectIntersection,
   useDroppable,
   useSensor,
   useSensors,
+} from "@dnd-kit/core";
+
+import type {
+  Active,
+  CollisionDetection,
+  Over,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -55,8 +68,6 @@ import CustomerDetailDialog, {
   formatDate,
   initials,
 } from "@/components/CustomerDetailDialog";
-import DashboardSidebar from "@/components/DashboardSidebar";
-
 import { api, getErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/swr";
 
@@ -69,22 +80,11 @@ import type {
 
 import type { Permissions } from "@/lib/auth";
 
-/* สีพื้นหลังของตัวเลขนับในหัวคอลัมน์ */
-const COUNT_TINTS = [
-  "#f1f5f9",
-  "#e8f1ff",
-  "#fdf6d8",
-  "#e6f8ec",
-  "#f1e8ff",
-  "#eef1f6",
-  "#fdecec",
-] as const;
+import { useTranslations } from "next-intl";
 
-function countTint(index: number) {
-  return COUNT_TINTS[
-    index % COUNT_TINTS.length
-  ];
-}
+
+
+
 
 /* =====================================================
    FILTERS
@@ -110,43 +110,6 @@ type DateRange = {
   from: string;
   to: string;
 };
-
-const DATE_BUCKET_LABELS: Record<
-  DateBucket,
-  string
-> = {
-  today: "เพิ่มวันนี้",
-  "7d": "7 วันที่ผ่านมา",
-  "30d": "30 วันที่ผ่านมา",
-  older: "เก่ากว่า 30 วัน",
-};
-
-const DATE_BUCKETS: {
-  value: DateBucket;
-  label: string;
-  icon: ReactNode;
-}[] = [
-  {
-    value: "today",
-    label: "เพิ่มวันนี้",
-    icon: <TodayIcon />,
-  },
-  {
-    value: "7d",
-    label: "7 วันที่ผ่านมา",
-    icon: <AccessTimeIcon />,
-  },
-  {
-    value: "30d",
-    label: "30 วันที่ผ่านมา",
-    icon: <HistoryIcon />,
-  },
-  {
-    value: "older",
-    label: "เก่ากว่า 30 วัน",
-    icon: <EventBusyIcon />,
-  },
-];
 
 function daysAgo(days: number) {
   const date = new Date();
@@ -212,166 +175,22 @@ const endOfDay = (value: string) =>
   new Date(`${value}T23:59:59.999`).getTime();
 
 /* =====================================================
-   FILTER PILL
-   ====================================================== */
-
-function FilterPill({
-  label,
-  onRemove,
-}: {
-  label: string;
-  onRemove: () => void;
-}) {
-  return (
-    <Chip
-      size="small"
-      label={label}
-      onDelete={onRemove}
-      deleteIcon={<CloseIcon fontSize="small" />}
-      sx={{
-        fontWeight: 700,
-        fontSize: 11,
-        height: 24,
-        borderRadius: "7px",
-        bgcolor: "#e8f1ff",
-        color: "#1d4ed8",
-        "& .MuiChip-deleteIcon": {
-          color: "#1d4ed8",
-        },
-      }}
-    />
-  );
-}
-
-/* =====================================================
-   FILTER PANEL (แบบ Trello)
-   ====================================================== */
-
-function FilterSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <Box sx={{ px: 2, py: 1.25 }}>
-      <Typography
-        sx={{
-          mb: 0.75,
-          fontWeight: 800,
-          fontSize: 13,
-          color: "#1a2233",
-        }}
-      >
-        {title}
-      </Typography>
-
-      <Stack spacing={0.25}>{children}</Stack>
-    </Box>
-  );
-}
-
-function FilterRow({
-  checked,
-  onChange,
-  icon,
-  label,
-  sub,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  icon: ReactNode;
-  label: string;
-  sub?: string;
-}) {
-  return (
-    <Box
-      component="label"
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 1.25,
-        px: 0.5,
-        py: 0.6,
-        mx: -0.5,
-        borderRadius: "8px",
-        cursor: "pointer",
-        "&:hover": { bgcolor: "#f4f6f9" },
-      }}
-    >
-      <Checkbox
-        size="small"
-        checked={checked}
-        onChange={(event) =>
-          onChange(event.target.checked)
-        }
-        sx={{ p: 0.5 }}
-      />
-
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 26,
-          height: 26,
-          borderRadius: "50%",
-          flexShrink: 0,
-          bgcolor: "#eef1f6",
-          color: "#64748b",
-          "& svg": { fontSize: 16 },
-        }}
-      >
-        {icon}
-      </Box>
-
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography
-          sx={{
-            fontWeight: 700,
-            fontSize: 13.5,
-            color: "#1a2233",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {label}
-        </Typography>
-
-        {sub && (
-          <Typography
-            variant="caption"
-            sx={{
-              display: "block",
-              color: "#94a3b8",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {sub}
-          </Typography>
-        )}
-      </Box>
-    </Box>
-  );
-}
-
-/* =====================================================
    CARD
    ====================================================== */
 
 function PipelineCard({
   customer,
   dragging,
+  ghost,
   onOpen,
 }: {
   customer: Customer;
   dragging?: boolean;
+  ghost?: boolean;
   onOpen: (customer: Customer) => void;
 }) {
+  const t = useTranslations("salesPipeline");
+
   const assigned =
     customer.assignedUser?.name ?? null;
 
@@ -380,20 +199,24 @@ function PipelineCard({
       data-testid="pipeline-card"
       data-customer-id={customer.customerId}
       sx={{
-        p: 1.75,
-        borderRadius: "14px",
+        p: 2,
+        borderRadius: "12px",
         border: "1px solid #e7ebf2",
         bgcolor: "#ffffff",
         boxShadow: dragging
-          ? "0 18px 36px rgba(15,23,42,0.18)"
-          : "0 1px 2px rgba(15,23,42,0.04)",
+          ? "0 12px 24px rgba(15,23,42,0.15)"
+          : "0 1px 3px rgba(15,23,42,0.04)",
         cursor: "pointer",
-        opacity: dragging ? 0.6 : 1,
-        transition: "box-shadow 150ms ease",
+        opacity: ghost ? 0 : 1,
+        pointerEvents: ghost
+          ? "none"
+          : undefined,
+        transition: "box-shadow 150ms ease, opacity 150ms ease",
         "&:hover": {
           borderColor: "#c7d2fe",
+          bgcolor: "#f8fafc",
           boxShadow:
-            "0 6px 16px rgba(15,23,42,0.08)",
+            "0 4px 12px rgba(15,23,42,0.08)",
         },
       }}
       onClick={() => onOpen(customer)}
@@ -403,122 +226,65 @@ function PipelineCard({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-start",
-          gap: 1.5,
+          gap: 1,
         }}
       >
-        <Box sx={{ minWidth: 0 }}>
-          <Typography
-            sx={{
-              fontWeight: 800,
-              color: "#0f172a",
-              fontSize: 14,
-              lineHeight: 1.35,
-              wordBreak: "break-word",
-            }}
-          >
-            {customer.companyName}
-          </Typography>
-
-          <Box
-            sx={{
-              mt: 1,
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              color: "#64748b",
-            }}
-          >
-            <PhoneIphoneIcon
-              sx={{ fontSize: 13 }}
-            />
-            <Typography
-              variant="caption"
-              sx={{ fontSize: 12 }}
-            >
-              {customer.phone || "-"}
-            </Typography>
-          </Box>
-
-          <Box
-            sx={{
-              mt: 0.4,
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              color: "#64748b",
-            }}
-          >
-            <MailOutlineIcon
-              sx={{ fontSize: 13 }}
-            />
-            <Typography
-              variant="caption"
-              sx={{
-                fontSize: 12,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: 190,
-              }}
-            >
-              {customer.email || "-"}
-            </Typography>
-          </Box>
-        </Box>
-
-        <Avatar
+        <Typography
           sx={{
-            width: 32,
-            height: 32,
-            fontSize: 12,
             fontWeight: 800,
-            bgcolor: assigned
-              ? "#e8f1ff"
-              : "#eef1f6",
-            color: assigned
-              ? "#1d4ed8"
-              : "#94a3b8",
-            flexShrink: 0,
+            color: "#0f172a",
+            fontSize: 14,
+            lineHeight: 1.35,
+            wordBreak: "break-word",
+            flex: 1,
+            minWidth: 0,
           }}
         >
-          {assigned
-            ? initials(assigned)
-            : "?"}
-        </Avatar>
+          {customer.companyName}
+        </Typography>
+
       </Box>
 
-      <Divider sx={{ my: 1.25 }} />
+      <Box
+        sx={{
+          mt: 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          color: "#64748b",
+        }}
+      >
+        <PhoneIphoneIcon sx={{ fontSize: 13 }} />
+        <Typography variant="caption" sx={{ fontSize: 12 }}>
+          {customer.phone || "-"}
+        </Typography>
+      </Box>
 
-      {(customer.purchaseCount ?? 0) > 0 && (
-        <Box
+      <Box
+        sx={{
+          mt: 0.5,
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          color: "#64748b",
+        }}
+      >
+        <MailOutlineIcon sx={{ fontSize: 13 }} />
+        <Typography
+          variant="caption"
           sx={{
-            mb: 1.25,
-            px: 0.85,
-            py: 0.4,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            alignSelf: "flex-start",
-            borderRadius: "7px",
-            bgcolor: "#16a34a14",
-            color: "#16a34a",
+            fontSize: 12,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            maxWidth: 200,
           }}
         >
-          <ReceiptLongIcon sx={{ fontSize: 13 }} />
+          {customer.email || "-"}
+        </Typography>
+      </Box>
 
-          <Typography
-            variant="caption"
-            sx={{
-              fontWeight: 800,
-              fontSize: 11,
-              color: "#16a34a",
-            }}
-          >
-            ซื้อแล้ว {customer.purchaseCount}{" "}
-            ครั้ง
-          </Typography>
-        </Box>
-      )}
+      <Divider sx={{ my: 1 }} />
 
       <Box
         sx={{
@@ -528,16 +294,43 @@ function PipelineCard({
           gap: 1,
         }}
       >
-        <Typography
-          variant="caption"
-          sx={{ color: "#94a3b8" }}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.75,
+            minWidth: 0,
+          }}
         >
-{assigned ?? "ไม่ระบุผู้รับผิดชอบ"}
-        </Typography>
+          <Avatar
+            sx={{
+              width: 24,
+              height: 24,
+              fontSize: 10,
+              fontWeight: 800,
+              bgcolor: assigned ? "#e8f1ff" : "#eef1f6",
+              color: assigned ? "#1d4ed8" : "#94a3b8",
+              flexShrink: 0,
+            }}
+          >
+            {assigned ? initials(assigned) : "?"}
+          </Avatar>
+          <Typography
+            variant="caption"
+            sx={{
+              color: "#64748b",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {assigned ?? t("unassigned")}
+          </Typography>
+        </Box>
 
         <Typography
           variant="caption"
-          sx={{ color: "#94a3b8" }}
+          sx={{ color: "#94a3b8", flexShrink: 0 }}
         >
           {formatDate(customer.createdAt)}
         </Typography>
@@ -571,40 +364,72 @@ function SortableCard({
         transform: CSS.Transform.toString(
           transform,
         ),
-        transition,
+        // ไม่ต้องมี transition ตอน-active drag เพราะ dnd-kit คุม transform เอง
+        transition: isDragging
+          ? undefined
+          : transition ||
+            "transform 150ms cubic-bezier(0.2, 1, 0.3, 1), opacity 150ms ease",
+        willChange: "transform",
       }}
       {...attributes}
       {...listeners}
     >
       <PipelineCard
         customer={customer}
-        dragging={isDragging}
+        ghost={isDragging}
         onOpen={onOpen}
       />
     </div>
   );
 }
 
-const CARD_HEIGHT = 128;
-const CARD_GAP = 16;
+const MemoSortableCard = memo(SortableCard);
+
+/*
+ * collision detection สำหรับ Kanban:
+ * - ถ้า cursor อยู่ใน target จริง ให้ใช้อันนั้นก่อน (ลื่นสุด ตามตำแหน่งเมาส์)
+ * - ถ้าไม่มี ค่อย fallback เป็นระยะ/recently intersection
+ * - สุดท้าย closestCorners กันพ零部件ตอน header/empty state
+ */
+const kanbanCollision: CollisionDetection = (
+  args,
+) => {
+  const pointerCollisions = pointerWithin(args);
+
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions;
+  }
+
+  const rectCollisions = rectIntersection(args);
+
+  if (rectCollisions.length > 0) {
+    return rectCollisions;
+  }
+
+  return closestCorners(args);
+};
+
+const CARD_HEIGHT = 148;
+const CARD_GAP = 1.25;
 
 function Column({
   stage,
-  index,
   customers,
   onOpen,
 }: {
   stage: PipelineStage;
-  index: number;
   customers: Customer[];
   onOpen: (customer: Customer) => void;
 }) {
+  const t = useTranslations("salesPipeline");
+
   const { setNodeRef, isOver } = useDroppable({
     id: stage.stageKey,
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual ไม่สามารถ memoize ได้ แต่ Column ไม่ถูกส่งต่อไปยัง component ที่ memoize
   const virtualizer = useVirtualizer({
     count: customers.length,
     getScrollElement: () => scrollRef.current,
@@ -617,37 +442,34 @@ function Column({
       data-testid="pipeline-column"
       data-status={stage.stageKey}
       sx={{
-        width: 272,
+        width: 280,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
-        maxHeight: "calc(100vh - 150px)",
+        maxHeight: "calc(100vh - 140px)",
         bgcolor: isOver
           ? "#eff6ff"
-          : "transparent",
-        borderRadius: "14px",
+          : "#ffffff",
+        border: "1px solid #e7ebf2",
+        borderRadius: "12px",
+        boxShadow: "0 1px 3px rgba(15,23,42,0.04)",
         transition: "background 150ms ease",
       }}
     >
       <Box
         sx={{
-          mb: 1.25,
-          px: 1.25,
-          py: 1,
+          mb: 1,
+          px: 1.5,
+          py: 1.25,
           display: "flex",
           alignItems: "center",
           gap: 1,
-          bgcolor: "#ffffff",
-          border: "1px solid #e7ebf2",
-          borderRadius: "12px",
-          boxShadow:
-            "0 1px 2px rgba(15,23,42,0.04)",
         }}
       >
         <Box
           sx={{
-            width: 9,
-            height: 9,
+            width: 10,
+            height: 10,
             borderRadius: "50%",
             bgcolor: stage.color,
             flexShrink: 0,
@@ -675,7 +497,7 @@ function Column({
             alignItems: "center",
             justifyContent: "center",
             borderRadius: 6,
-            bgcolor: countTint(index),
+            bgcolor: "#f1f5f9",
             fontSize: 11,
             fontWeight: 800,
             color: "#475569",
@@ -693,6 +515,13 @@ function Column({
         sx={{
           flex: 1,
           overflowY: "auto",
+          scrollbarWidth: "none",
+          msOverflowStyle: "none",
+          "&::-webkit-scrollbar": {
+            display: "none",
+            width: 0,
+            height: 0,
+          },
           display: "flex",
           flexDirection: "column",
           gap: 1.25,
@@ -729,10 +558,16 @@ function Column({
                       top: 0,
                       left: 0,
                       width: "100%",
+                      /*
+                       * ต้องเป็น paddingBottom ไม่ใช่ marginBottom
+                       * เพราะ measureElement อ่าน border-box (รวม padding ไม่รวม margin)
+                       * ใช้ margin แล้ว gap จะไม่นับเข้า item size การ์ดตัวถัดมาจะมาซ้อนทับ
+                       */
+                      paddingBottom: CARD_GAP,
                       transform: `translateY(${virtualItem.start}px)`,
                     }}
                   >
-                    <SortableCard
+                    <MemoSortableCard
                       customer={customer}
                       onOpen={onOpen}
                     />
@@ -756,7 +591,7 @@ function Column({
               variant="caption"
               sx={{ color: "#94a3b8" }}
             >
-              ยังไม่มีลูกค้า
+              {t("noCustomers")}
             </Typography>
           </Box>
         )}
@@ -765,11 +600,43 @@ function Column({
   );
 }
 
+const MemoColumn = memo(Column);
+
 /* =====================================================
    PAGE
    ====================================================== */
 
 export default function SalesPipelinePage() {
+  const t = useTranslations("salesPipeline");
+
+
+  const DATE_BUCKETS: {
+    value: DateBucket;
+    label: string;
+    icon: ReactNode;
+  }[] = [
+    {
+      value: "today",
+      label: t("dateBuckets.today"),
+      icon: <TodayIcon />,
+    },
+    {
+      value: "7d",
+      label: t("dateBuckets.7d"),
+      icon: <AccessTimeIcon />,
+    },
+    {
+      value: "30d",
+      label: t("dateBuckets.30d"),
+      icon: <HistoryIcon />,
+    },
+    {
+      value: "older",
+      label: t("dateBuckets.older"),
+      icon: <EventBusyIcon />,
+    },
+  ];
+
   const { user, permissions, ready } = useSession();
 
   const {
@@ -812,10 +679,18 @@ export default function SalesPipelinePage() {
     useState<Customer | null>(null);
   const [notice, setNotice] = useState("");
 
+  /*
+   * เก็บสถานะตั้งต้นของ card ที่ลากอยู่ ตอน drag ระหว่างคอลัมน์
+   * ถ้า drop ไม่สำเร็จหรือ cancel ต้องเอากลับเป็นค่าเดิม
+   */
+  const dragOriginStatus = useRef<string | null>(
+    null,
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5,
+        distance: 8,
       },
     }),
   );
@@ -864,33 +739,13 @@ export default function SalesPipelinePage() {
     if (unassigned > 0) {
       options.push({
         id: UNASSIGNED,
-        name: "ยังไม่ระบุผู้รับผิดชอบ",
+        name: t("unassigned"),
         count: unassigned,
       });
     }
 
     return options;
-  }, [customers]);
-
-  const salesNameById = useMemo(() => {
-    const map = new Map<number, string>();
-
-    for (const item of salesOptions) {
-      map.set(item.id, item.name);
-    }
-
-    return map;
-  }, [salesOptions]);
-
-  const stageLabelByKey = useMemo(() => {
-    const map = new Map<string, string>();
-
-    for (const stage of stages) {
-      map.set(stage.stageKey, stage.label);
-    }
-
-    return map;
-  }, [stages]);
+  }, [customers, t]);
 
   const hasFilter =
     search.trim().length > 0 ||
@@ -919,13 +774,6 @@ export default function SalesPipelinePage() {
     dateBucket !== "" ||
     dateFrom !== "" ||
     dateTo !== "";
-
-  const dateRangeLabel =
-    dateFrom !== "" || dateTo !== ""
-      ? `วันที่ ${dateFrom || "…"} → ${dateTo || "…"}`
-      : dateBucket !== ""
-        ? DATE_BUCKET_LABELS[dateBucket]
-        : "";
 
   const filterCount =
     salesFilter.length +
@@ -1045,74 +893,228 @@ export default function SalesPipelinePage() {
     activeRange,
   ]);
 
-  async function persistStatus(
+  /*
+   * อัปเดต status ใน SWR cache ทันทีโดยไม่ดึงข้อมูลใหม่
+   * ใช้ระหว่างลาก (drag-over preview) และตอนปล่อย (drop) ให้รู้สึกไม่มีกระตุก
+   */
+  function patchCustomerStatus(
     customerId: number,
     status: string,
   ) {
-    try {
-      await api.patch(`/customers/${customerId}`, {
-        status,
-      });
+    void reloadCustomers(
+      (current) =>
+        current
+          ? {
+              ...current,
+              data: current.data.map((item) =>
+                item.customerId === customerId
+                  ? { ...item, status }
+                  : item,
+              ),
+            }
+          : current,
+      { revalidate: false },
+    );
+  }
 
-      setNotice("อัปเดตสถานะใน Pipeline แล้ว");
-      await reloadCustomers();
-    } catch (err) {
-      setNotice(
-        getErrorMessage(
-          err,
-          "ไม่สามารถอัปเดตสถานะได้",
-        ),
-      );
+  /*
+   * เปลี่ยนสถานะผ่าน API แล้ว refetch ข้อมูลจริงกลับมา
+   * ถ้าล้มเหลว refetch ทันทีเพื่อยกเลิก optimistic update ที่ค้างอยู่
+   */
+  const persistStatus = useCallback(
+    async (
+      customerId: number,
+      status: string,
+    ) => {
+      try {
+        await api.patch(
+          `/api/customers/${customerId}`,
+          {
+            status,
+          },
+        );
+
+        setNotice(t("statusUpdated"));
+        await reloadCustomers();
+      } catch (err) {
+        setNotice(
+          getErrorMessage(
+            err,
+            t("statusUpdateError"),
+          ),
+        );
+
+        await reloadCustomers();
+      }
+    },
+    [t, reloadCustomers],
+  );
+
+  /*
+   * ลากไปวางบน card คนอื่นได้ด้วย ต้องหาว่า card นั้นอยู่คอลัมน์ไหน
+   * เพราะการปล่อยบนตัวการ์ดถือว่าอยากให้เข้าแถวเดียวกันกับคนนั้น
+   */
+  function resolveTargetStatus(
+    overId: number | string,
+  ): string | null {
+    const asStage = String(overId);
+
+    if (
+      stages.some(
+        (stage) => stage.stageKey === asStage,
+      )
+    ) {
+      return asStage;
     }
+
+    const numeric = Number(overId);
+
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+
+    const overCustomer = customers.find(
+      (item) => item.customerId === numeric,
+    );
+
+    return overCustomer?.status ?? null;
   }
 
   function handleDragStart(
     event: {
-      active: { id: number | string };
+      active: Active;
     },
   ) {
     const id = Number(event.active.id);
 
-    setDragging(
-      customers.find(
-        (customer) => customer.customerId === id,
-      ) ?? null,
+    const customer = customers.find(
+      (item) => item.customerId === id,
+    );
+
+    dragOriginStatus.current =
+      customer?.status ?? null;
+
+    setDragging(customer ?? null);
+  }
+
+  const handleOpenCustomer = useCallback(
+    (customer: Customer) => {
+      setActiveId(customer);
+    },
+    [],
+  );
+
+  /*
+   * สำคัญที่สุดของความ "ลื่น": ขณะลากผ่านคอลัมน์อื่น
+   * ให้ย้าย card ไปอยู่ใน target column ทันที (optimistic)
+   * ตอนปล่อย card จึงอยู่ที่ถูกที่แล้ว ไม่ต้องโดนดึงข้อมูลใหม่แล้ววาร์ป
+   */
+  function handleDragOver(
+    event: {
+      active: Active;
+      over: Over | null;
+    },
+  ) {
+    const activeId = Number(event.active.id);
+
+    if (!event.over || Number.isNaN(activeId)) {
+      return;
+    }
+
+    const targetStatus = resolveTargetStatus(
+      event.over.id,
+    );
+
+    if (!targetStatus) {
+      return;
+    }
+
+    const activeCustomer = customers.find(
+      (item) => item.customerId === activeId,
+    );
+
+    if (
+      !activeCustomer ||
+      activeCustomer.status === targetStatus
+    ) {
+      return;
+    }
+
+    patchCustomerStatus(
+      activeCustomer.customerId,
+      targetStatus,
+    );
+
+    setDragging((prev) =>
+      prev
+        ? { ...prev, status: targetStatus }
+        : prev,
     );
   }
 
   function handleDragEnd(
     event: {
-      active: { id: number | string };
-      over: { id: number | string } | null;
+      active: Active;
+      over: Over | null;
     },
   ) {
+    const activeId = Number(event.active.id);
+
     setDragging(null);
 
-    if (!event.over) {
+    const originStatus = dragOriginStatus.current;
+
+    dragOriginStatus.current = null;
+
+    if (!event.over || Number.isNaN(activeId)) {
+      // ปล่อยนอกพื้นที่ที่ยอมรับได้ -> เอากลับคอลัมน์เดิมทันที
+      if (originStatus !== null) {
+        patchCustomerStatus(
+          activeId,
+          originStatus,
+        );
+      }
+
       return;
     }
 
-    const customerId = Number(event.active.id);
-    const targetStatus = String(event.over.id);
-
-    const isStage = stages.some(
-      (stage) => stage.stageKey === targetStatus,
+    const targetStatus = resolveTargetStatus(
+      event.over.id,
     );
 
-    if (!isStage) {
+    if (!targetStatus) {
       return;
     }
 
-    const customer = customers.find(
-      (item) => item.customerId === customerId,
-    );
-
-    if (!customer || customer.status === targetStatus) {
+    /*
+     * เทียบกับสถานะต้นทาง ไม่ใช่สถานะปัจจุบัน
+     * เพราะอาจถูกล่วงระหว่าง drag-over แล้ว ถ้าเทียบกับสถานะปัจจุบันจะไม่ยิง API
+     */
+    if (!originStatus || originStatus === targetStatus) {
       return;
     }
 
-    void persistStatus(customerId, targetStatus);
+    patchCustomerStatus(activeId, targetStatus);
+
+    void persistStatus(activeId, targetStatus);
   }
+
+  function handleDragCancel() {
+    const activeId = dragging?.customerId;
+    const originStatus = dragOriginStatus.current;
+
+    setDragging(null);
+
+    dragOriginStatus.current = null;
+
+    if (!activeId || originStatus === null) {
+      return;
+    }
+
+    patchCustomerStatus(activeId, originStatus);
+  }
+
+
 
   if (!user) {
     return (
@@ -1130,7 +1132,7 @@ export default function SalesPipelinePage() {
     );
   }
 
-  const fallbackPermissions: Permissions =
+  const _fallbackPermissions: Permissions =
     permissions ?? {
       dashboard: true,
       customers: true,
@@ -1157,109 +1159,53 @@ export default function SalesPipelinePage() {
         bgcolor: "#f6f8fb",
       }}
     >
-      <DashboardSidebar
-        user={user}
-        permissions={fallbackPermissions}
-      />
-
       <Box
         component="main"
         sx={{
           flex: 1,
           minWidth: 0,
-          p: { xs: 2, md: 4 },
+          p: { xs: 2, md: 3 },
           overflowX: "hidden",
           overflowY: "hidden",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         {/* ---- header ---- */}
         <Box
           sx={{
-            mb: 3,
+            mb: 2,
             display: "flex",
             justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: 3,
-            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 2,
           }}
         >
-          <Box>
-            <Typography
-              sx={{
-                fontWeight: 800,
-                fontSize: 13,
-                letterSpacing: 1.2,
-                color: "#2563eb",
-              }}
-            >
-              SALES PIPELINE
-            </Typography>
-
-            <Typography
-              component="h1"
-              variant="h4"
-              sx={{
-                mt: 0.5,
-                fontWeight: 800,
-                color: "#0f172a",
-                lineHeight: 1.2,
-              }}
-            >
-              บอร์ดติดตามลูกค้า
-            </Typography>
-
-            <Typography
-              variant="body2"
-              sx={{
-                mt: 0.5,
-                color: "#64748b",
-              }}
-            >
-              ลากการ์ดเพื่อเปลี่ยนสถานะ
-              คลิกการ์ดเพื่อดูรายละเอียดและ
-              เอกสารของลูกค้า
-            </Typography>
-          </Box>
+          <Typography
+            component="h1"
+            variant="h5"
+            sx={{
+              fontWeight: 800,
+              color: "#172033",
+              lineHeight: 1.2,
+            }}
+          >
+            {t("subtitle")}
+          </Typography>
 
           <Stack
             direction="row"
-            spacing={1.25}
+            spacing={1.5}
             sx={{
               alignItems: "center",
-              flexWrap: "wrap",
             }}
           >
-            <Button
-              variant="outlined"
-              startIcon={<FilterAltIcon />}
-              onClick={(event) =>
-                setFilterAnchor(
-                  event.currentTarget,
-                )
-              }
-              data-testid="pipeline-filter-button"
-              sx={{
-                textTransform: "none",
-                fontWeight: 700,
-                color: "#2563eb",
-                borderColor: "#bfdbfe",
-                borderRadius: 2,
-                bgcolor: "#ffffff",
-                "&:hover": {
-                  bgcolor: "#eff6ff",
-                  borderColor: "#93c5fd",
-                },
-              }}
-            >
-              ตัวกรอง
-            </Button>
-
             <Typography
               variant="body2"
               sx={{ color: "#64748b" }}
             >
-              แสดง {totalVisible} จาก{" "}
-              {customers.length} ราย
+              {t("showing")} {totalVisible} {t("of")}{" "}
+              {customers.length} {t("entries")}
             </Typography>
 
             {hasFilter && (
@@ -1275,62 +1221,82 @@ export default function SalesPipelinePage() {
                   px: 1,
                 }}
               >
-                ล้างตัวกรอง
+                {t("clearFilters")}
               </Button>
             )}
           </Stack>
         </Box>
 
-        {/* ---- active filter pills ---- */}
-        {(search.trim().length > 0 ||
-          filterCount > 0) && (
-          <Stack
-            direction="row"
-            spacing={0.75}
+        {/* ---- filter row ---- */}
+        <Stack
+          direction="row"
+          spacing={1.25}
+          sx={{
+            mb: 2.5,
+            alignItems: "center",
+            flexWrap: { xs: "wrap", sm: "nowrap" },
+          }}
+        >
+          <TextField
+            size="small"
+            value={search}
+            onChange={(event) =>
+              setSearch(event.target.value)
+            }
+            placeholder={t("keywordPlaceholder")}
             sx={{
-              mb: 3,
-              flexWrap: "wrap",
-              alignItems: "center",
+              flex: { xs: "1 1 100%", sm: "0 1 240px" },
+              "& .MuiOutlinedInput-root": {
+                borderRadius: "8px",
+                bgcolor: "#ffffff",
+              },
+            }}
+          />
+
+          <Button
+            variant="outlined"
+            startIcon={<FilterAltIcon />}
+            onClick={(event) =>
+              setFilterAnchor(
+                event.currentTarget,
+              )
+            }
+            data-testid="pipeline-filter-button"
+            sx={{
+              textTransform: "none",
+              fontWeight: 700,
+              borderRadius: "8px",
+              color: "#2563eb",
+              borderColor: "#bfdbfe",
+              bgcolor: "#ffffff",
+              flexShrink: 0,
+              "&:hover": {
+                bgcolor: "#eff6ff",
+                borderColor: "#93c5fd",
+              },
             }}
           >
-            {search.trim().length > 0 && (
-              <FilterPill
-                label={`คำค้น: ${search.trim()}`}
-                onRemove={() => setSearch("")}
-              />
-            )}
-
-            {salesFilter.map((id) => (
-              <FilterPill
-                key={`sales-${id}`}
-                label={
-                  salesNameById.get(id) ??
-                  `Sales #${id}`
-                }
-                onRemove={() => toggleSales(id)}
-              />
-            ))}
-
-            {statusFilter.map((key) => (
-              <FilterPill
-                key={`status-${key}`}
-                label={stageLabelByKey.get(key) ?? key}
-                onRemove={() => toggleStatus(key)}
-              />
-            ))}
-
-            {dateFilterOn && (
-              <FilterPill
-                label={dateRangeLabel}
-                onRemove={() => {
-                  setDateBucket("");
-                  setDateFrom("");
-                  setDateTo("");
+            {t("filter")}
+            {hasFilter && (
+              <Box
+                component="span"
+                sx={{
+                  ml: 1,
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: "10px",
+                  bgcolor: "#ffffff",
+                  color: "#026aa7",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  lineHeight: 1,
                 }}
-              />
+              >
+                {filterCount + (search.trim().length > 0 ? 1 : 0)}
+              </Box>
             )}
-          </Stack>
-        )}
+          </Button>
+        </Stack>
 
         {/* ---- filter panel (Trello style) ---- */}
         <Popover
@@ -1348,12 +1314,13 @@ export default function SalesPipelinePage() {
           slotProps={{
             paper: {
               sx: {
-                width: 340,
+                width: 320,
                 maxWidth: "calc(100vw - 32px)",
                 mt: 1,
-                borderRadius: "14px",
+                borderRadius: "8px",
                 boxShadow:
-                  "0 12px 32px rgba(15,23,42,0.18)",
+                  "0 8px 24px rgba(9,30,66,0.25)",
+                overflow: "hidden",
               },
             },
           }}
@@ -1363,46 +1330,51 @@ export default function SalesPipelinePage() {
             sx={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "space-between",
+              justifyContent: "center",
+              position: "relative",
               px: 2,
               py: 1.5,
+              bgcolor: "#fafbfc",
+              borderBottom: "1px solid #dfe1e6",
             }}
           >
             <Typography
               sx={{
-                fontWeight: 800,
-                fontSize: 16,
-                color: "#1a2233",
+                fontWeight: 700,
+                fontSize: 14,
+                color: "#172b4d",
               }}
             >
-              Filter
+              {t("filterTitle")}
             </Typography>
 
             <IconButton
               size="small"
-              aria-label="ปิดตัวกรอง"
+              aria-label={t("clearFiltersAria")}
               onClick={() =>
                 setFilterAnchor(null)
               }
-              sx={{ color: "#64748b" }}
+              sx={{
+                position: "absolute",
+                right: 8,
+                color: "#6b778c",
+              }}
             >
               <CloseIcon fontSize="small" />
             </IconButton>
           </Box>
 
-          <Divider />
-
           {/* ---- keyword ---- */}
-          <Box sx={{ px: 2, pt: 1.75, pb: 1.25 }}>
+          <Box sx={{ px: 2, pt: 1.5, pb: 1 }}>
             <Typography
               sx={{
                 mb: 0.75,
-                fontWeight: 800,
-                fontSize: 13,
-                color: "#1a2233",
+                fontWeight: 600,
+                fontSize: 14,
+                color: "#172b4d",
               }}
             >
-              คำค้น (Keyword)
+              {t("keyword")}
             </Typography>
 
             <TextField
@@ -1413,10 +1385,22 @@ export default function SalesPipelinePage() {
               onChange={(event) =>
                 setSearch(event.target.value)
               }
-              placeholder="ค้นหาบริษัท อีเมล เบอร์..."
+              placeholder="Enter a keyword..."
               sx={{
                 "& .MuiOutlinedInput-root": {
-                  borderRadius: "8px",
+                  borderRadius: "4px",
+                  bgcolor: "#fafbfc",
+                  "&:hover": {
+                    bgcolor: "#ebecf0",
+                  },
+                  "&.Mui-focused": {
+                    bgcolor: "#ffffff",
+                    borderColor: "#0079bf",
+                    boxShadow: "0 0 0 1px #0079bf",
+                  },
+                },
+                "& .MuiOutlinedInput-input": {
+                  py: 1.25,
                 },
               }}
             />
@@ -1426,115 +1410,250 @@ export default function SalesPipelinePage() {
               sx={{
                 display: "block",
                 mt: 0.75,
-                color: "#94a3b8",
+                color: "#6b778c",
+                fontSize: 12,
               }}
             >
-              ค้นหาลูกค้า ชื่อบริษัท อีเมล
-              เบอร์โทร และชื่อ Sales
+              Search cards, members, labels, and more.
             </Typography>
           </Box>
 
           {/* ---- members ---- */}
-          <FilterSection title="Sales ผู้รับผิดชอบ (Members)">
+          <Box sx={{ px: 2, pt: 1.5, pb: 1 }}>
+            <Typography
+              sx={{
+                mb: 0.75,
+                fontWeight: 600,
+                fontSize: 14,
+                color: "#172b4d",
+              }}
+            >
+              {t("members")}
+            </Typography>
+
             {salesOptions.map((item) => (
-              <FilterRow
+              <Box
                 key={item.id}
-                checked={salesFilter.includes(item.id)}
-                onChange={(next) => {
-                  if (next) {
+                onClick={() => {
+                  if (
+                    salesFilter.includes(item.id)
+                  ) {
+                    toggleSales(item.id);
+                  } else {
                     setSalesFilter((current) =>
                       current.includes(item.id)
                         ? current
                         : [...current, item.id],
                     );
-                  } else {
-                    toggleSales(item.id);
                   }
                 }}
-                icon={
-                  item.id === UNASSIGNED ? (
-                    <PersonOffIcon />
-                  ) : (
-                    <PersonIcon />
-                  )
-                }
-                label={item.name}
-                sub={`${item.count} ราย`}
-              />
-            ))}
-          </FilterSection>
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.5,
+                  py: 0.5,
+                  cursor: "pointer",
+                  borderRadius: "4px",
+                  "&:hover": {
+                    bgcolor: "#ebecf0",
+                  },
+                }}
+              >
+                <Checkbox
+                  checked={salesFilter.includes(item.id)}
+                  size="small"
+                  sx={{
+                    p: 0,
+                    color: "#6b778c",
+                    "&.Mui-checked": {
+                      color: "#0079bf",
+                    },
+                  }}
+                />
 
-          <Divider />
+                {item.id === UNASSIGNED ? (
+                  <PersonOffIcon
+                    sx={{
+                      fontSize: 20,
+                      color: "#6b778c",
+                    }}
+                  />
+                ) : (
+                  <Avatar
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      bgcolor: "#0079bf",
+                      color: "#ffffff",
+                    }}
+                  >
+                    {initials(item.name)}
+                  </Avatar>
+                )}
+
+                <Typography
+                  sx={{
+                    fontSize: 14,
+                    color: "#172b4d",
+                  }}
+                >
+                  {item.name}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
 
           {/* ---- card status ---- */}
-          <FilterSection title="สถานะการ์ด (Card status)">
+          <Box sx={{ px: 2, pt: 1.5, pb: 1 }}>
+            <Typography
+              sx={{
+                mb: 0.75,
+                fontWeight: 600,
+                fontSize: 14,
+                color: "#172b4d",
+              }}
+            >
+              {t("cardStatus")}
+            </Typography>
+
             {stages.map((stage) => (
-              <FilterRow
+              <Box
                 key={stage.stageKey}
-                checked={statusFilter.includes(
-                  stage.stageKey,
-                )}
-                onChange={(next) => {
-                  if (next) {
+                onClick={() => {
+                  if (
+                    statusFilter.includes(stage.stageKey)
+                  ) {
+                    toggleStatus(stage.stageKey);
+                  } else {
                     setStatusFilter((current) =>
                       current.includes(stage.stageKey)
                         ? current
                         : [...current, stage.stageKey],
                     );
-                  } else {
-                    toggleStatus(stage.stageKey);
                   }
                 }}
-                icon={
-                  <Box
-                    sx={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: "50%",
-                      bgcolor: stage.color,
-                    }}
-                  />
-                }
-                label={stage.label}
-              />
-            ))}
-          </FilterSection>
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.5,
+                  py: 0.5,
+                  cursor: "pointer",
+                  borderRadius: "4px",
+                  "&:hover": {
+                    bgcolor: "#ebecf0",
+                  },
+                }}
+              >
+                <Checkbox
+                  checked={statusFilter.includes(
+                    stage.stageKey,
+                  )}
+                  size="small"
+                  sx={{
+                    p: 0,
+                    color: "#6b778c",
+                    "&.Mui-checked": {
+                      color: "#0079bf",
+                    },
+                  }}
+                />
 
-          <Divider />
+                <Box
+                  sx={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "3px",
+                    bgcolor: stage.color,
+                    flexShrink: 0,
+                  }}
+                />
+
+                <Typography
+                  sx={{
+                    fontSize: 14,
+                    color: "#172b4d",
+                  }}
+                >
+                  {stage.label}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
 
           {/* ---- due date ---- */}
-          <FilterSection title="วันที่เพิ่มลูกค้า (Due date)">
-            {DATE_BUCKETS.map((bucket) => (
-              <FilterRow
-                key={bucket.value}
-                checked={dateBucket === bucket.value}
-                onChange={(next) => {
-                  /*
-                   * ช่วงเวลาเลือกได้ครั้งเดียว
-                   * ถ้าเลือกช่วงใหม่ให้ล้างช่วงเดิม
-                   */
-                  setDateBucket(
-                    next ? bucket.value : "",
-                  );
+          <Box sx={{ px: 2, pt: 1.5, pb: 1.5 }}>
+            <Typography
+              sx={{
+                mb: 0.75,
+                fontWeight: 600,
+                fontSize: 14,
+                color: "#172b4d",
+              }}
+            >
+              {t("dueDate")}
+            </Typography>
 
+            {DATE_BUCKETS.map((bucket) => (
+              <Box
+                key={bucket.value}
+                onClick={() => {
+                  setDateBucket(
+                    dateBucket === bucket.value
+                      ? ""
+                      : bucket.value,
+                  );
                   setDateFrom("");
                   setDateTo("");
                 }}
-                icon={bucket.icon}
-                label={bucket.label}
-              />
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.5,
+                  py: 0.5,
+                  cursor: "pointer",
+                  borderRadius: "4px",
+                  "&:hover": {
+                    bgcolor: "#ebecf0",
+                  },
+                }}
+              >
+                <Checkbox
+                  checked={dateBucket === bucket.value}
+                  size="small"
+                  sx={{
+                    p: 0,
+                    color: "#6b778c",
+                    "&.Mui-checked": {
+                      color: "#0079bf",
+                    },
+                  }}
+                />
+
+                {bucket.icon}
+
+                <Typography
+                  sx={{
+                    fontSize: 14,
+                    color: "#172b4d",
+                  }}
+                >
+                  {bucket.label}
+                </Typography>
+              </Box>
             ))}
 
             <Stack
               direction="row"
               spacing={1}
-              sx={{ mt: 1, px: 0.5 }}
+              sx={{ mt: 1, pl: 9.5 }}
             >
               <TextField
                 fullWidth
                 size="small"
                 type="date"
-                label="ตั้งแต่"
+                label={t("from")}
                 value={dateFrom}
                 onChange={(event) => {
                   setDateFrom(event.target.value);
@@ -1545,7 +1664,13 @@ export default function SalesPipelinePage() {
                 }}
                 sx={{
                   "& .MuiOutlinedInput-root": {
-                    borderRadius: "8px",
+                    borderRadius: "4px",
+                    bgcolor: "#fafbfc",
+                    "&.Mui-focused": {
+                      bgcolor: "#ffffff",
+                      borderColor: "#0079bf",
+                      boxShadow: "0 0 0 1px #0079bf",
+                    },
                   },
                 }}
               />
@@ -1554,7 +1679,7 @@ export default function SalesPipelinePage() {
                 fullWidth
                 size="small"
                 type="date"
-                label="ถึง"
+                label={t("to")}
                 value={dateTo}
                 onChange={(event) => {
                   setDateTo(event.target.value);
@@ -1565,57 +1690,17 @@ export default function SalesPipelinePage() {
                 }}
                 sx={{
                   "& .MuiOutlinedInput-root": {
-                    borderRadius: "8px",
+                    borderRadius: "4px",
+                    bgcolor: "#fafbfc",
+                    "&.Mui-focused": {
+                      bgcolor: "#ffffff",
+                      borderColor: "#0079bf",
+                      boxShadow: "0 0 0 1px #0079bf",
+                    },
                   },
                 }}
               />
             </Stack>
-          </FilterSection>
-
-          <Divider />
-
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 1,
-              px: 2,
-              py: 1.5,
-            }}
-          >
-            <Button
-              size="small"
-              disabled={!hasFilter}
-              onClick={resetFilters}
-              sx={{
-                textTransform: "none",
-                fontWeight: 700,
-                color: "#64748b",
-              }}
-            >
-              ล้างตัวกรอง
-            </Button>
-
-            <Button
-              size="small"
-              variant="contained"
-              onClick={() =>
-                setFilterAnchor(null)
-              }
-              sx={{
-                textTransform: "none",
-                fontWeight: 700,
-                borderRadius: "8px",
-                bgcolor: "#0f62fe",
-                boxShadow: "none",
-                "&:hover": {
-                  bgcolor: "#0353e9",
-                  boxShadow: "none",
-                },
-              }}
-            >
-              ดู {totalVisible} ราย
-            </Button>
           </Box>
         </Popover>
 
@@ -1627,6 +1712,13 @@ export default function SalesPipelinePage() {
               gap: 2,
               overflowX: "auto",
               pb: 2,
+              scrollbarWidth: "none",
+              msOverflowStyle: "none",
+              "&::-webkit-scrollbar": {
+                display: "none",
+                width: 0,
+                height: 0,
+              },
             }}
           >
             {stages.map((stage) => (
@@ -1681,7 +1773,7 @@ export default function SalesPipelinePage() {
                 color: "#172033",
               }}
             >
-ยังไม่มีลูกค้าในระบบ
+              {t("noCustomers")}
             </Typography>
 
             <Typography
@@ -1691,7 +1783,7 @@ export default function SalesPipelinePage() {
                 color: "#94a3b8",
               }}
             >
-เพิ่มลูกค้าได้ที่หน้า Customers
+              {t("noCustomersHint")}
             </Typography>
           </Card>
         ) : hasFilter && totalVisible === 0 ? (
@@ -1717,7 +1809,7 @@ export default function SalesPipelinePage() {
                 color: "#172033",
               }}
             >
-ไม่พบผลลัพธ์
+              {t("noResults")}
             </Typography>
 
             <Typography
@@ -1727,18 +1819,17 @@ export default function SalesPipelinePage() {
                 color: "#94a3b8",
               }}
             >
-              ไม่พบลูกค้าที่ตรงกับตัวกรองที่เลือก
+              {t("noResultsHint")}
             </Typography>
           </Card>
         ) : (
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCorners}
+            collisionDetection={kanbanCollision}
             onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
-            onDragCancel={() =>
-              setDragging(null)
-            }
+            onDragCancel={handleDragCancel}
           >
             <Box
               sx={{
@@ -1747,32 +1838,39 @@ export default function SalesPipelinePage() {
                 overflowX: "auto",
                 pb: 2,
                 alignItems: "flex-start",
+                scrollbarWidth: "none",
+                msOverflowStyle: "none",
+                "&::-webkit-scrollbar": {
+                  display: "none",
+                  width: 0,
+                  height: 0,
+                },
               }}
             >
               {stages.map((stage) => (
-                <Column
+                <MemoColumn
                   key={stage.stageId}
                   stage={stage}
-                  index={
-                    stages.findIndex(
-                      (item) =>
-                        item.stageId ===
-                        stage.stageId,
-                    )
-                  }
                   customers={
                     byColumn[stage.stageKey] ?? []
                   }
-                  onOpen={(target) =>
-                    setActiveId(target)
-                  }
+                  onOpen={handleOpenCustomer}
                 />
               ))}
             </Box>
 
-            <DragOverlay>
+            <DragOverlay dropAnimation={{ duration: 200, easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)" }}>
               {dragging ? (
-                <Box sx={{ width: 272 }}>
+                <Box
+                  sx={{
+                    width: 280,
+                    transform: "rotate(3deg)",
+                    cursor: "grabbing",
+                    "& > *": {
+                      pointerEvents: "none",
+                    },
+                  }}
+                >
                   <PipelineCard
                     customer={dragging}
                     dragging
@@ -1790,6 +1888,7 @@ export default function SalesPipelinePage() {
           customer={activeId}
           stages={stages}
           onClose={() => setActiveId(null)}
+          onMove={persistStatus}
         />
       )}
 

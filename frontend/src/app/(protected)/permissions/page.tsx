@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import LockIcon from "@mui/icons-material/Lock";
 import Alert from "@mui/material/Alert";
@@ -16,8 +17,6 @@ import Snackbar from "@mui/material/Snackbar";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-
-import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/swr";
@@ -43,45 +42,6 @@ interface ModuleDef {
   labelEn: string;
   hint: string;
 }
-
-const MODULES: ModuleDef[] = [
-  {
-    key: "dashboard",
-    label: "Dashboard",
-    labelEn: "Dashboard",
-    hint: "เห็นภาพรวมลูกค้าและยอดขาย",
-  },
-  {
-    key: "customers",
-    label: "Customer Database",
-    labelEn: "Customer Database",
-    hint: "เข้าถึงและแก้ไขข้อมูลลูกค้า",
-  },
-  {
-    key: "salesPipeline",
-    label: "Sales Pipeline",
-    labelEn: "Sales Pipeline",
-    hint: "จัดการขั้นตอนการขาย",
-  },
-  {
-    key: "documents",
-    label: "Documents",
-    labelEn: "Quotation/Invoice/Receipt",
-    hint: "ใบเสนอราคา ใบแจ้งหนี้ ใบเสร็จ",
-  },
-  {
-    key: "reports",
-    label: "Reports",
-    labelEn: "Reports",
-    hint: "รายงานยอดขาย ลูกค้า และ Sales",
-  },
-  {
-    key: "administration",
-    label: "Administration Settings",
-    labelEn: "Administration Settings",
-    hint: "ตั้งค่าสิทธิ์และดู Audit Logs",
-  },
-];
 
 const ROLES: {
   role: UserRole;
@@ -127,8 +87,51 @@ function toSessionPermissions(
 }
 
 export default function PermissionsPage() {
+  const t = useTranslations("permissions");
   const router = useRouter();
   const { user, permissions, ready } = useSession();
+
+  const MODULES = useMemo<ModuleDef[]>(
+    () => [
+      {
+        key: "dashboard",
+        label: t("modules.dashboard"),
+        labelEn: "Dashboard",
+        hint: t("moduleHints.dashboard"),
+      },
+      {
+        key: "customers",
+        label: t("modules.customers"),
+        labelEn: "Customer Database",
+        hint: t("moduleHints.customers"),
+      },
+      {
+        key: "salesPipeline",
+        label: t("modules.salesPipeline"),
+        labelEn: "Sales Pipeline",
+        hint: t("moduleHints.salesPipeline"),
+      },
+      {
+        key: "documents",
+        label: t("modules.documents"),
+        labelEn: t("modules.documentsEn"),
+        hint: t("moduleHints.documents"),
+      },
+      {
+        key: "reports",
+        label: t("modules.reports"),
+        labelEn: "Reports",
+        hint: t("moduleHints.reports"),
+      },
+      {
+        key: "administration",
+        label: t("modules.administration"),
+        labelEn: "Administration Settings",
+        hint: t("moduleHints.administration"),
+      },
+    ],
+    [t],
+  );
 
   const {
     data: matrixData,
@@ -145,12 +148,12 @@ export default function PermissionsPage() {
     () => savedMatrix,
     [savedMatrix],
   );
-  const baseline = matrixData ?? {};
+  const baseline = useMemo(() => matrixData ?? {}, [matrixData]);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [noticeType, setNoticeType] = useState<"success" | "error">("success");
+
 
   const canManage = permissions?.administration === true;
 
@@ -173,7 +176,7 @@ export default function PermissionsPage() {
     setSavedMatrix((current) => ({
       ...current,
       [role]: {
-        ...(current[role] ?? {}),
+        ...current[role],
         [key]: value,
       },
     }));
@@ -190,7 +193,7 @@ export default function PermissionsPage() {
         (item) => item.editable,
       )) {
         payload[role] = {
-          ...(matrix[role] ?? {}),
+          ...matrix[role],
         };
       }
 
@@ -211,14 +214,12 @@ export default function PermissionsPage() {
         );
       }
 
-      setNotice(
-        "บันทึกสิทธิ์การใช้งานเรียบร้อยแล้ว (ผู้ใช้ต้อง Login ใหม่เพื่อให้มีผล)",
-      );
+      setNotice(t("saved"));
     } catch (err) {
       setError(
         getErrorMessage(
           err,
-          "ไม่สามารถบันทึกสิทธิ์ได้",
+          t("saveError"),
         ),
       );
     } finally {
@@ -239,15 +240,9 @@ export default function PermissionsPage() {
             baseline[role]?.[module.key],
         ),
     );
-  }, [matrix, baseline, loading]);
+  }, [matrix, baseline, loading, MODULES]);
 
-  const showNotice = useCallback(
-    (message: string, type: "success" | "error") => {
-      setNotice(message);
-      setNoticeType(type);
-    },
-    [],
-  );
+
 
   if (!user) {
     return (
@@ -273,22 +268,6 @@ export default function PermissionsPage() {
         bgcolor: "#f5f7fa",
       }}
     >
-      <DashboardSidebar
-        user={user}
-        permissions={
-          permissions ?? {
-            dashboard: false,
-            customers: false,
-            salesPipeline: false,
-            documents: false,
-            reports: false,
-            administration: false,
-            permissions: false,
-            auditLogs: false,
-          }
-        }
-      />
-
       <Box
         component="main"
         sx={{
@@ -321,8 +300,7 @@ export default function PermissionsPage() {
                 lineHeight: 1.2,
               }}
             >
-              จัดการสิทธิ์การใช้งาน
-              (Permissions &amp; Roles)
+              {t("title")}
             </Typography>
 
             <Typography
@@ -333,8 +311,7 @@ export default function PermissionsPage() {
                 color: "#64748b",
               }}
             >
-              กำหนดสิทธิ์การเข้าถึงโมดูลต่างๆ
-              สำหรับ Admin, Manager และ Sales
+              {t("subtitle")}
             </Typography>
           </Box>
 
@@ -362,9 +339,7 @@ export default function PermissionsPage() {
               },
             }}
           >
-            {saving
-              ? "กำลังบันทึก..."
-              : "บันทึกการเปลี่ยนแปลง"}
+            {saving ? t("saving") : t("save")}
           </Button>
         </Box>
 
@@ -373,9 +348,7 @@ export default function PermissionsPage() {
             severity="warning"
             sx={{ mb: 2 }}
           >
-            หน้านี้ดูได้แบบอ่านอย่างเดียว
-            เฉพาะผู้ดูแลระบบ (Admin)
-            เท่านั้นที่จะแก้ไขสิทธิ์ได้
+            {t("readOnly")}
           </Alert>
         )}
 
@@ -419,7 +392,7 @@ export default function PermissionsPage() {
                 width: { xs: "100%", md: 260 },
               }}
             >
-              โมดูล/ระบบงาน
+              {t("module")}
             </Typography>
 
             <Box
@@ -683,11 +656,7 @@ export default function PermissionsPage() {
                     color: "#64748b",
                   }}
                 >
-                  สิทธิ์ของ ADMIN
-                  ถูกล็อกไว้เสมอ
-                  และ ADMIN เข้าถึงทุกโมดูลโดยไม่ต้องตั้งค่า
-                  การแก้ไขจะมีผลกับผู้ใช้
-                  หลัง Login ใหม่
+                  {t("adminLocked")}
                 </Typography>
               </Box>
             </>

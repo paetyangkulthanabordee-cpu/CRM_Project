@@ -63,6 +63,12 @@ export class DocumentsService {
       });
     }
 
+    if (query.dateFrom) {
+      builder.andWhere('doc.issueDate >= :dateFrom', {
+        dateFrom: query.dateFrom,
+      });
+    }
+
     if (query.from) {
       builder.andWhere('doc.issueDate >= :from', {
         from: query.from,
@@ -106,7 +112,41 @@ export class DocumentsService {
       }),
     );
 
-    const total = await builder.getCount();
+    const countBuilder = this.documentsRepository
+      .createQueryBuilder('doc')
+      .leftJoin(Customer, 'c', 'c.customerId = doc.customerId')
+      .leftJoin(User, 'u', 'u.userId = doc.createdBy');
+
+    if (query.type) {
+      countBuilder.andWhere('doc.docType = :type', { type: query.type });
+    }
+    if (query.status) {
+      countBuilder.andWhere('doc.status = :status', { status: query.status });
+    }
+    if (query.dateFrom) {
+      countBuilder.andWhere('doc.issueDate >= :dateFrom', {
+        dateFrom: query.dateFrom,
+      });
+    }
+    if (query.from) {
+      countBuilder.andWhere('doc.issueDate >= :from', { from: query.from });
+    }
+    if (query.to) {
+      countBuilder.andWhere('doc.issueDate <= :to', { to: query.to });
+    }
+    if (query.search) {
+      countBuilder.andWhere(
+        '(doc.docNo ILIKE :search OR doc.refDocNo ILIKE :search OR c.companyName ILIKE :search)',
+        { search: `%${query.search}%` },
+      );
+    }
+    if (query.customerId) {
+      countBuilder.andWhere('doc.customerId = :customerId', {
+        customerId: query.customerId,
+      });
+    }
+
+    const total = await countBuilder.getCount();
 
     return { data, total, page, limit };
   }

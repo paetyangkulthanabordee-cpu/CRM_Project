@@ -13,6 +13,7 @@ import Typography from "@mui/material/Typography";
 import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { useSession } from "@/lib/useSession";
+import { useSidebar } from "@/app/(protected)/layout";
 
 interface Props {
   title: string;
@@ -35,6 +36,12 @@ export default function ComingSoonPage({
       router.replace("/login");
     }
   }, [ready, user, router]);
+
+  const {
+    collapsed,
+    mobileOpen,
+    onCloseMobile,
+  } = useSidebar();
 
   if (!user) {
     return (
@@ -74,6 +81,9 @@ export default function ComingSoonPage({
             auditLogs: user.role === "ADMIN",
           }
         }
+        collapsed={collapsed}
+        mobileOpen={mobileOpen}
+        onCloseMobile={onCloseMobile}
       />
 
       <Box

@@ -31,6 +31,12 @@ export class ListDocumentsDto {
   @Matches(DATE_PATTERN, {
     message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
   })
+  dateFrom?: string;
+
+  @IsOptional()
+  @Matches(DATE_PATTERN, {
+    message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
+  })
   from?: string;
 
   @IsOptional()

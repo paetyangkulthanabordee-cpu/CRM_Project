@@ -50,9 +50,15 @@ export class CustomersService {
 
     if (query.search) {
       builder.andWhere(
-        '(customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.phone ILIKE :search)',
+        '(customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.phone ILIKE :search OR assigned.name ILIKE :search)',
         { search: `%${query.search}%` },
       );
+    }
+
+    if (query.dateFrom) {
+      builder.andWhere('customer.createdAt >= :dateFrom', {
+        dateFrom: query.dateFrom,
+      });
     }
 
     const page = Math.max(1, Number(query.page) || 1);

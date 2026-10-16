@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 
+import { useLocale, useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -14,8 +15,6 @@ import Divider from "@mui/material/Divider";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-
-import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { useApi } from "@/lib/swr";
 
@@ -32,6 +31,8 @@ import type {
 import type { DashboardData } from "@/lib/types";
 
 export default function DashboardPage() {
+  const t = useTranslations("dashboard");
+  const locale = useLocale();
   const router = useRouter();
   const { user, permissions, ready } = useSession();
 
@@ -89,38 +90,38 @@ export default function DashboardPage() {
 
   const kpiCards = [
     {
-      label: "ลูกค้าทั้งหมด",
+      label: t("totalCustomers"),
       value: kpis?.totalCustomers ?? 0,
-      suffix: "ราย",
-      note: `${kpis?.activeCustomers ?? 0} รายกำลังดำเนินการ`,
+      suffix: t("customersUnit"),
+      note: t("activeCustomersNote", { count: kpis?.activeCustomers ?? 0 }),
       noteColor: "#4f46e5",
     },
     {
-      label: "ลีดใหม่",
+      label: t("newLeads"),
       value: kpis?.newCustomers ?? 0,
-      suffix: "ราย",
-      note: "สถานะ New",
+      suffix: t("customersUnit"),
+      note: t("newStatus"),
       noteColor: "#0284c7",
     },
     {
-      label: "กำลังดำเนินการ",
+      label: t("inProgress"),
       value: kpis?.activeCustomers ?? 0,
-      suffix: "ราย",
-      note: "Open + In Progress",
+      suffix: t("customersUnit"),
+      note: t("openInProgress"),
       noteColor: "#f59e0b",
     },
     {
-      label: "มีดีล (Open Deal)",
+      label: t("openDeals"),
       value: kpis?.dealCustomers ?? 0,
-      suffix: "ราย",
-      note: "โอกาสขายที่ปิดดีล",
+      suffix: t("customersUnit"),
+      note: t("openDealNote"),
       noteColor: "#16a34a",
     },
     {
-      label: "อัตราปิดดีล",
+      label: t("conversionRate"),
       value: kpis?.conversionRate ?? 0,
       suffix: "%",
-      note: "Open Deal / ลูกค้าทั้งหมด",
+      note: t("conversionNote"),
       noteColor: "#10b981",
     },
   ];
@@ -133,15 +134,6 @@ export default function DashboardPage() {
         bgcolor: "#f5f7fa",
       }}
     >
-      {/* =================================================
-          SIDEBAR
-      ================================================== */}
-
-      <DashboardSidebar
-        user={user}
-        permissions={dashboardPermissions}
-      />
-
       {/* =================================================
           MAIN CONTENT
       ================================================== */}
@@ -173,7 +165,7 @@ export default function DashboardPage() {
               letterSpacing: 0.5,
             }}
           >
-            ● OPERATIONAL INTELLIGENCE
+            {t("operationalIntelligence")}
           </Typography>
 
           <Typography
@@ -185,7 +177,7 @@ export default function DashboardPage() {
               color: "#172033",
             }}
           >
-            CRM Executive & Sales Overview
+            {t("title")}
           </Typography>
 
           <Typography
@@ -196,8 +188,7 @@ export default function DashboardPage() {
               mt: 0.5,
             }}
           >
-            ข้อมูลดึงมาจาก API แบบ Real-time
-            พร้อมสิทธิ์การเข้าถึงตาม Role
+            {t("subtitle")}
           </Typography>
         </Box>
 
@@ -232,10 +223,8 @@ export default function DashboardPage() {
                 fontWeight: 700,
               }}
             >
-              📅 วันที่:{" "}
-              {new Date().toLocaleDateString(
-                "th-TH",
-              )}
+              📅 {t("date")}:{" "}
+              {new Date().toLocaleDateString(locale)}
             </Typography>
           </Box>
 
@@ -247,8 +236,8 @@ export default function DashboardPage() {
             sx={{ textTransform: "none" }}
           >
             {loading
-              ? "กำลังโหลด..."
-              : "รีเฟรชข้อมูล"}
+              ? t("loading")
+              : t("refresh")}
           </Button>
         </Box>
 
@@ -276,7 +265,7 @@ export default function DashboardPage() {
               variant="body2"
               sx={{ color: "#b91c1c", fontWeight: 700 }}
             >
-              ไม่สามารถโหลดข้อมูล Dashboard ได้
+              {t("loadError")}
             </Typography>
 
             <Button
@@ -285,7 +274,7 @@ export default function DashboardPage() {
               onClick={() => void refreshDashboard()}
               sx={{ textTransform: "none" }}
             >
-              ลองใหม่
+              {t("retry")}
             </Button>
           </Box>
         )}
@@ -300,7 +289,7 @@ export default function DashboardPage() {
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, 1fr)",
-              xl: "repeat(5, 1fr)",
+              lg: "repeat(5, 1fr)",
             },
             gap: 3,
             mb: 4,
@@ -348,9 +337,7 @@ export default function DashboardPage() {
                         color: "#172033",
                       }}
                     >
-                      {card.value.toLocaleString(
-                        "th-TH",
-                      )}
+                      {card.value.toLocaleString(locale)}
                       <Typography
                         component="span"
                         variant="body1"
@@ -414,8 +401,7 @@ export default function DashboardPage() {
                       mb: 0.5,
                     }}
                   >
-                    Sales Pipeline Funnel & Stage
-                    Analysis
+                    {t("salesPipelineFunnel")}
                   </Typography>
 
                   <Typography
@@ -423,7 +409,7 @@ export default function DashboardPage() {
                     variant="body2"
                     color="text.secondary"
                   >
-                    จำนวนลูกค้าแต่ละสถานะจากฐานข้อมูล
+                    {t("salesPipelineSubtitle")}
                   </Typography>
                 </Box>
 
@@ -442,7 +428,7 @@ export default function DashboardPage() {
                       fontWeight: 700,
                     }}
                   >
-                    Standard Funnel v3
+                    {t("standardFunnel")}
                   </Typography>
                 </Box>
               </Box>
@@ -454,7 +440,7 @@ export default function DashboardPage() {
                     xs: "1fr",
                     sm: "repeat(2, 1fr)",
                     md: "repeat(3, 1fr)",
-                    xl: "repeat(6, 1fr)",
+                    lg: "repeat(6, 1fr)",
                   },
                   gap: 1.5,
                   mt: 3,
@@ -564,8 +550,8 @@ export default function DashboardPage() {
                         }}
                       >
                         {index === 0
-                          ? "Inflow 100%"
-                          : `Conv. ${conversion}%`}
+                          ? t("inflow")
+                          : t("conv", { percent: conversion })}
                       </Typography>
                     </Box>
                   );
@@ -607,7 +593,7 @@ export default function DashboardPage() {
                   mb: 2,
                 }}
               >
-                Recent Customers
+                {t("recentCustomers")}
               </Typography>
 
               {showSkeleton ? (
@@ -628,7 +614,7 @@ export default function DashboardPage() {
                   variant="body2"
                   color="text.secondary"
                 >
-                  ยังไม่มีข้อมูลลูกค้าในระบบ
+                  {t("noCustomers")}
                 </Typography>
               ) : (
                 <Stack spacing={2}>
@@ -680,11 +666,11 @@ export default function DashboardPage() {
                               mt: 0.5,
                             }}
                           >
-                            เพิ่มเมื่อ:{" "}
+                            {t("addedOn")}:{" "}
                             {new Date(
                               customer.createdAt,
                             ).toLocaleDateString(
-                              "th-TH",
+                              locale,
                             )}
                           </Typography>
                         </Box>
@@ -728,7 +714,7 @@ export default function DashboardPage() {
                   mb: 2,
                 }}
               >
-                Quick Actions
+                {t("quickActions")}
               </Typography>
 
               <Stack spacing={1.5}>
@@ -744,7 +730,7 @@ export default function DashboardPage() {
                       textTransform: "none",
                     }}
                   >
-                    + New Customer
+                    {t("newCustomer")}
                   </Button>
                 )}
 
@@ -760,7 +746,7 @@ export default function DashboardPage() {
                       textTransform: "none",
                     }}
                   >
-                    + New Quote
+                    {t("newQuote")}
                   </Button>
                 )}
 
@@ -776,7 +762,7 @@ export default function DashboardPage() {
                       textTransform: "none",
                     }}
                   >
-                    + New Activity
+                    {t("newActivity")}
                   </Button>
                 )}
               </Stack>
@@ -805,7 +791,7 @@ export default function DashboardPage() {
               color: "#075985",
             }}
           >
-            Current Role: {user.role}
+            {t("currentRole", { role: user.role })}
           </Typography>
 
           <Typography
@@ -816,8 +802,7 @@ export default function DashboardPage() {
               mt: 0.5,
             }}
           >
-            เมนูและฟังก์ชันบน Dashboard
-            จะแสดงตาม Permission ของ Role นี้
+            {t("roleNote")}
           </Typography>
         </Box>
       </Box>

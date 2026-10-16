@@ -19,23 +19,27 @@ import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
+import { useTranslations } from "next-intl";
+
 import { api, getErrorMessage } from "@/lib/api";
 import { saveAuth } from "@/lib/auth";
 import type { LoginResponse } from "@/lib/auth";
 
-const loginSchema = z.object({
-  email: z
-    .string()
-    .min(1, "กรุณากรอก Email")
-    .email("รูปแบบ Email ไม่ถูกต้อง"),
-
-  password: z
-    .string()
-    .min(1, "กรุณากรอกรหัสผ่าน"),
-});
-
 export default function LoginPage() {
   const router = useRouter();
+  const t = useTranslations("auth");
+  const tCommon = useTranslations("common");
+
+  const loginSchema = z.object({
+    email: z
+      .string()
+      .min(1, t("emailRequired"))
+      .email(t("invalidEmail")),
+
+    password: z
+      .string()
+      .min(1, t("passwordRequired")),
+  });
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -61,7 +65,7 @@ export default function LoginPage() {
     if (!result.success) {
       setError(
         result.error.issues[0]?.message ||
-          "ข้อมูลไม่ถูกต้อง",
+          tCommon("error"),
       );
 
       return;
@@ -83,17 +87,12 @@ export default function LoginPage() {
 
       saveAuth(data);
 
-      /*
-       * Login สำเร็จ
-       * Backend ส่งข้อมูล User + Role
-       * จากนั้นไป Dashboard
-       */
       router.replace("/dashboard");
     } catch (err) {
       setError(
         getErrorMessage(
           err,
-          "Email หรือ Password ไม่ถูกต้อง",
+          t("invalidCredentials"),
         ),
       );
     } finally {
@@ -121,7 +120,6 @@ export default function LoginPage() {
           }}
         >
           <Stack spacing={3}>
-            {/* Header */}
             <Box
               sx={{
                 textAlign: "center",
@@ -133,7 +131,7 @@ export default function LoginPage() {
                   fontWeight: 700,
                 }}
               >
-                CRM System
+                {t("loginTitle")}
               </Typography>
 
               <Typography
@@ -143,27 +141,24 @@ export default function LoginPage() {
                   mt: 1,
                 }}
               >
-                เข้าสู่ระบบจัดการลูกค้า
+                {t("loginSubtitle")}
               </Typography>
             </Box>
 
-            {/* Error */}
             {error && (
               <Alert severity="error">
                 {error}
               </Alert>
             )}
 
-            {/* Login Form */}
             <Box
               component="form"
               onSubmit={handleLogin}
             >
               <Stack spacing={2.5}>
-                {/* Email */}
                 <TextField
                   fullWidth
-                  label="Email"
+                  label={t("email")}
                   type="email"
                   value={email}
                   onChange={(event) =>
@@ -172,10 +167,9 @@ export default function LoginPage() {
                   disabled={loading}
                 />
 
-                {/* Password */}
                 <TextField
                   fullWidth
-                  label="Password"
+                  label={t("password")}
                   type="password"
                   value={password}
                   onChange={(event) =>
@@ -184,7 +178,6 @@ export default function LoginPage() {
                   disabled={loading}
                 />
 
-                {/* Remember Me */}
                 <FormControlLabel
                   control={
                     <Checkbox
@@ -197,10 +190,9 @@ export default function LoginPage() {
                       disabled={loading}
                     />
                   }
-                  label="Remember me"
+                  label={t("rememberMe")}
                 />
 
-                {/* Login Button */}
                 <Button
                   type="submit"
                   variant="contained"
@@ -219,7 +211,7 @@ export default function LoginPage() {
                       color="inherit"
                     />
                   ) : (
-                    "Login"
+                    t("loginButton")
                   )}
                 </Button>
               </Stack>

@@ -32,8 +32,8 @@ api.interceptors.response.use(
       if (!url.includes("/auth/login")) {
         clearAuth();
 
-        if (window.location.pathname !== "/login") {
-          window.location.href = "/login";
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+          window.location.replace("/login");
         }
       }
     }
@@ -60,7 +60,7 @@ export function getErrorMessage(
     }
 
     if (!error.response) {
-      return "ไม่สามารถเชื่อมต่อ Server ได้";
+      return fallback;
     }
   }
 

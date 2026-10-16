@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 
 import Link from "next/link";
+
 import { usePathname, useRouter } from "next/navigation";
 
 import BarChartIcon from "@mui/icons-material/BarChart";
@@ -20,15 +21,25 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Collapse from "@mui/material/Collapse";
 import Divider from "@mui/material/Divider";
+import Drawer from "@mui/material/Drawer";
 import Stack from "@mui/material/Stack";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+
+import { useTranslations } from "next-intl";
+
+import LanguageSwitcher from "@/components/LanguageSwitcher";
 
 import { logout } from "@/lib/auth";
 import type { Permissions, User } from "@/lib/auth";
+import { useBreakpoint } from "@/lib/useMediaQuery";
 
 interface Props {
   user: User;
   permissions: Permissions;
+  collapsed: boolean;
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
 }
 
 interface NavLink {
@@ -51,6 +62,8 @@ type NavEntry = NavLink | NavGroup;
 
 const ACTIVE_COLOR = "#2563eb";
 const INACTIVE_COLOR = "#172033";
+const SIDEBAR_WIDTH = 250;
+const COLLAPSED_WIDTH = 72;
 
 const ITEM_SX = {
   justifyContent: "flex-start",
@@ -79,9 +92,14 @@ const SUB_ROW_SX = {
 export default function DashboardSidebar({
   user,
   permissions,
+  collapsed,
+  mobileOpen,
+  onCloseMobile,
 }: Props) {
   const pathname = usePathname();
   const router = useRouter();
+  const t = useTranslations("nav");
+  const { isMobile } = useBreakpoint();
 
   const [groupState, setGroupState] = useState<
     Record<string, boolean>
@@ -96,50 +114,50 @@ export default function DashboardSidebar({
     {
       kind: "link",
       href: "/dashboard",
-      label: "Dashboard",
+      label: t("dashboard"),
       icon: <GridViewIcon fontSize="small" />,
     },
     {
       kind: "link",
       href: "/customers",
-      label: "Customers",
+      label: t("customers"),
       icon: <PeopleAltIcon fontSize="small" />,
     },
     {
       kind: "link",
       href: "/sales-pipeline",
-      label: "Sales Pipeline",
+      label: t("salesPipeline"),
       icon: <FilterAltIcon fontSize="small" />,
     },
     {
       kind: "link",
       href: "/documents",
-      label: "Documents",
+      label: t("documents"),
       icon: <DescriptionIcon fontSize="small" />,
     },
     {
       kind: "group",
       key: "reports",
-      label: "Reports",
+      label: t("reports"),
       icon: <BarChartIcon fontSize="small" />,
       matches: (path) => path.startsWith("/reports"),
       children: [
         {
           kind: "link",
           href: "/reports/sales",
-          label: "รายงานยอดขาย",
+          label: t("reportsSales"),
           icon: <BarChartIcon fontSize="small" />,
         },
         {
           kind: "link",
           href: "/reports/customers",
-          label: "รายงานลูกค้า",
+          label: t("reportsCustomers"),
           icon: <PeopleAltIcon fontSize="small" />,
         },
         {
           kind: "link",
           href: "/reports/sales-pipeline",
-          label: "รายงาน Sales",
+          label: t("reportsSalesPipeline"),
           icon: <FilterAltIcon fontSize="small" />,
         },
       ],
@@ -147,7 +165,7 @@ export default function DashboardSidebar({
     {
       kind: "group",
       key: "administration",
-      label: "Administration",
+      label: t("administration"),
       icon: <SettingsIcon fontSize="small" />,
       matches: (path) =>
         path.startsWith("/permissions") ||
@@ -158,25 +176,25 @@ export default function DashboardSidebar({
         {
           kind: "link",
           href: "/permissions",
-          label: "Permissions",
+          label: t("permissions"),
           icon: <ShieldIcon fontSize="small" />,
         },
         {
           kind: "link",
           href: "/users",
-          label: "Users",
+          label: t("users"),
           icon: <PeopleAltIcon fontSize="small" />,
         },
         {
           kind: "link",
           href: "/manage-pipeline",
-          label: "Management Pipeline",
+          label: t("managePipeline"),
           icon: <TuneIcon fontSize="small" />,
         },
         {
           kind: "link",
           href: "/audit-logs",
-          label: "Audit Logs",
+          label: t("auditLogs"),
           icon: <HistoryIcon fontSize="small" />,
         },
       ],
@@ -218,36 +236,27 @@ export default function DashboardSidebar({
     }));
   }
 
-  return (
-    <Box
-      component="aside"
-      sx={{
-        width: 250,
-        minHeight: "100vh",
-        flexShrink: 0,
-        borderRight: "1px solid #e5e7eb",
-        bgcolor: "#ffffff",
-        py: 2,
-        px: 1.5,
-        boxSizing: "border-box",
-      }}
-    >
-      <Stack spacing={0.5}>
-        {/* ==================== LOGO ==================== */}
-        <Typography
-          component="div"
-          variant="h5"
-          sx={{
-            px: 1.5,
-            pb: 2,
-            color: "#075e54",
-            fontWeight: 800,
-          }}
-        >
-          Apex CRM
-        </Typography>
+  const sidebarContent = (
+    <Stack spacing={0.5}>
+      {/* ==================== LOGO ==================== */}
+      <Typography
+        component="div"
+        variant="h5"
+        sx={{
+          px: collapsed ? 0 : 1.5,
+          pb: 2,
+          color: "#075e54",
+          fontWeight: 800,
+          textAlign: collapsed ? "center" : "left",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+        }}
+      >
+        {collapsed ? "A" : "Apex CRM"}
+      </Typography>
 
-        {/* ==================== USER ==================== */}
+      {/* ==================== USER ==================== */}
+      {!collapsed && (
         <Box
           sx={{
             p: 2,
@@ -301,103 +310,143 @@ export default function DashboardSidebar({
             {user.role}
           </Typography>
         </Box>
+      )}
 
-        <Divider sx={{ mb: 1.5 }} />
+      <Divider sx={{ mb: 1.5 }} />
 
-        {/* ==================== MENU ==================== */}
-        {entries
-          .filter(isGroupVisible)
-          .map((entry) => {
-            if (entry.kind === "link") {
-              const active = pathname === entry.href;
+      {/* ==================== MENU ==================== */}
+      {entries
+        .filter(isGroupVisible)
+        .map((entry) => {
+          if (entry.kind === "link") {
+            const active = pathname === entry.href;
 
-              return (
-                <Button
-                  key={entry.href}
-                  component={Link}
-                  href={entry.href}
-                  variant="text"
-                  aria-current={
-                    active ? "page" : undefined
-                  }
-                  startIcon={entry.icon}
-                  sx={{
-                    ...ITEM_SX,
-                    ...ROW_SX,
-                    fontWeight: active ? 800 : 600,
-                    color: active
-                      ? ACTIVE_COLOR
-                      : INACTIVE_COLOR,
+            const button = (
+              <Button
+                key={entry.href}
+                component={Link}
+                href={entry.href}
+                variant="text"
+                aria-current={
+                  active ? "page" : undefined
+                }
+                startIcon={entry.icon}
+                onClick={isMobile ? onCloseMobile : undefined}
+                sx={{
+                  ...ITEM_SX,
+                  ...ROW_SX,
+                  fontWeight: active ? 800 : 600,
+                  color: active
+                    ? ACTIVE_COLOR
+                    : INACTIVE_COLOR,
+                  bgcolor: active
+                    ? "#eff6ff"
+                    : "transparent",
+                  "&:hover": {
                     bgcolor: active
                       ? "#eff6ff"
-                      : "transparent",
-                    "&:hover": {
-                      bgcolor: active
-                        ? "#eff6ff"
-                        : "#f6f8fb",
-                    },
-                  }}
-                >
-                  {entry.label}
-                </Button>
-              );
-            }
+                      : "#f6f8fb",
+                  },
+                  ...(collapsed && {
+                    justifyContent: "center",
+                    px: 0,
+                    minWidth: 0,
+                  }),
+                }}
+              >
+                {!collapsed && entry.label}
+              </Button>
+            );
 
-            const groupActive = entry.matches(pathname);
-            const open =
-              groupState[entry.key] ?? groupActive;
+            return collapsed ? (
+              <Tooltip
+                key={entry.href}
+                title={entry.label}
+                placement="right"
+              >
+                {button}
+              </Tooltip>
+            ) : (
+              button
+            );
+          }
 
-            return (
-              <Box key={entry.key}>
-                <Button
-                  onClick={() =>
-                    toggleGroup(entry.key, groupActive)
-                  }
-                  variant="text"
-                  aria-expanded={open}
-                  aria-controls={`nav-${entry.key}`}
-                  startIcon={entry.icon}
-                  endIcon={
-                    <ExpandMoreIcon
-                      fontSize="small"
-                      sx={{
-                        ml: "auto",
-                        color: groupActive
-                          ? ACTIVE_COLOR
-                          : "#94a3b8",
-                        transform: open
-                          ? "rotate(180deg)"
-                          : "none",
-                        transition:
-                          "transform 180ms ease",
-                      }}
-                    />
-                  }
-                  sx={{
-                    ...ITEM_SX,
-                    ...ROW_SX,
-                    fontWeight: groupActive
-                      ? 800
-                      : 600,
-                    color: groupActive
-                      ? ACTIVE_COLOR
-                      : INACTIVE_COLOR,
-                    bgcolor: groupActive
-                      ? "#eff6ff"
-                      : "transparent",
-                    "& .MuiButton-endIcon": {
+          const groupActive = entry.matches(pathname);
+          const open =
+            groupState[entry.key] ?? groupActive;
+
+          const groupButton = (
+            <Button
+              onClick={() =>
+                toggleGroup(entry.key, groupActive)
+              }
+              variant="text"
+              aria-expanded={open}
+              aria-controls={`nav-${entry.key}`}
+              startIcon={entry.icon}
+              endIcon={
+                !collapsed ? (
+                  <ExpandMoreIcon
+                    fontSize="small"
+                    sx={{
                       ml: "auto",
-                    },
-                    "&:hover": {
-                      bgcolor: groupActive
-                        ? "#eff6ff"
-                        : "#f6f8fb",
-                    },
-                  }}
-                >
-                  {entry.label}
-                </Button>
+                      color: groupActive
+                        ? ACTIVE_COLOR
+                        : "#94a3b8",
+                      transform: open
+                        ? "rotate(180deg)"
+                        : "none",
+                      transition:
+                        "transform 180ms ease",
+                    }}
+                  />
+                ) : undefined
+              }
+              sx={{
+                ...ITEM_SX,
+                ...ROW_SX,
+                fontWeight: groupActive
+                  ? 800
+                  : 600,
+                color: groupActive
+                  ? ACTIVE_COLOR
+                  : INACTIVE_COLOR,
+                bgcolor: groupActive
+                  ? "#eff6ff"
+                  : "transparent",
+                "& .MuiButton-endIcon": {
+                  ml: "auto",
+                },
+                "&:hover": {
+                  bgcolor: groupActive
+                    ? "#eff6ff"
+                    : "#f6f8fb",
+                },
+                ...(collapsed && {
+                  justifyContent: "center",
+                  px: 0,
+                  minWidth: 0,
+                }),
+              }}
+            >
+              {!collapsed && entry.label}
+            </Button>
+          );
 
+          return (
+            <Box key={entry.key}>
+              {collapsed ? (
+                <Tooltip
+                  title={entry.label}
+                  placement="right"
+                >
+                  {groupButton}
+                </Tooltip>
+              ) : (
+                groupButton
+              )}
+
+              {!collapsed && (
                 <Collapse
                   in={open}
                   timeout="auto"
@@ -422,6 +471,11 @@ export default function DashboardSidebar({
                             active ? "page" : undefined
                           }
                           startIcon={child.icon}
+                          onClick={
+                            isMobile
+                              ? onCloseMobile
+                              : undefined
+                          }
                           sx={{
                             ...ITEM_SX,
                             ...SUB_ROW_SX,
@@ -452,29 +506,100 @@ export default function DashboardSidebar({
                     })}
                   </Stack>
                 </Collapse>
-              </Box>
-            );
-          })}
+              )}
+            </Box>
+          );
+        })}
 
-        {/* Spacer */}
-        <Box sx={{ flex: 1, minHeight: 20 }} />
+      {/* Spacer */}
+      <Box sx={{ flex: 1, minHeight: 20 }} />
 
-        <Divider sx={{ my: 1.5 }} />
+      <Divider sx={{ my: 1.5 }} />
 
-        {/* ==================== LOGOUT ==================== */}
-        <Button
-          color="error"
-          onClick={handleLogout}
-          variant="text"
-          sx={{
-            ...ITEM_SX,
-            ...ROW_SX,
-            fontWeight: 600,
-          }}
-        >
-          Logout
-        </Button>
-      </Stack>
-    </Box>
+      {/* ==================== LANGUAGE SWITCHER ==================== */}
+      <Box
+        sx={{
+          ...ROW_SX,
+          ...(collapsed && {
+            justifyContent: "center",
+            px: 0,
+            minWidth: 0,
+          }),
+        }}
+      >
+        <LanguageSwitcher />
+      </Box>
+
+      {/* ==================== LOGOUT ==================== */}
+      <Button
+        color="error"
+        onClick={handleLogout}
+        variant="text"
+        sx={{
+          ...ITEM_SX,
+          ...ROW_SX,
+          fontWeight: 600,
+          ...(collapsed && {
+            justifyContent: "center",
+            px: 0,
+            minWidth: 0,
+          }),
+        }}
+      >
+        {!collapsed && t("logout")}
+      </Button>
+    </Stack>
+  );
+
+  const sidebarSx = {
+    width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH,
+    minHeight: "100vh",
+    flexShrink: 0,
+    borderRight: "1px solid #e5e7eb",
+    bgcolor: "#ffffff",
+    py: 2,
+    px: collapsed ? 0.75 : 1.5,
+    boxSizing: "border-box",
+    transition: "width 200ms ease",
+    overflowX: "hidden",
+  };
+
+  return (
+    <>
+      {/* Desktop / Tablet Sidebar */}
+      <Box
+        component="aside"
+        sx={{
+          ...sidebarSx,
+          display: {
+            xs: "none",
+            md: "block",
+          },
+        }}
+      >
+        {sidebarContent}
+      </Box>
+
+      {/* Mobile Drawer */}
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={onCloseMobile}
+        ModalProps={{ keepMounted: true }}
+        sx={{
+          display: { xs: "block", md: "none" },
+          "& .MuiDrawer-paper": {
+            width: SIDEBAR_WIDTH,
+            boxSizing: "border-box",
+          },
+        }}
+      >
+        <Box sx={{ py: 2, px: 1.5 }}>
+          {sidebarContent}
+        </Box>
+      </Drawer>
+
+
+    </>
   );
 }

@@ -70,20 +70,21 @@ async function seed() {
 
   const existingCustomers = await customersService.findAll({ onlyInactive: true });
 
-  if ((existingCustomers as unknown as { data: unknown[] }).data.length === 0) {
+  if (existingCustomers.data.length === 0) {
+    const stageKeys = stages.map((s) => s.stageKey);
     const customers = [
-      { companyName: 'บริษัท เทคโนโลยี จำกัด', email: 'contact@tech.co.th', phone: '02-123-4567', status: 'lead' },
-      { companyName: 'บริษัท ดิจิทัล โซลูชั่น', email: 'info@digital.co.th', phone: '02-234-5678', status: 'qualified' },
-      { companyName: 'บริษัท สมาร์ท ซิสเต็ม', email: 'hello@smart.co.th', phone: '02-345-6789', status: 'send_quotation' },
-      { companyName: 'บริษัท คราวด์ เซิร์ฟเวอร์', email: 'support@cloud.co.th', phone: '02-456-7890', status: 'payment' },
-      { companyName: 'บริษัท อินเตอร์เน็ต จำกัด', email: 'admin@internet.co.th', phone: '02-567-8901', status: 'contract' },
-      { companyName: 'บริษัท ซอฟต์แวร์ ดีไซน์', email: 'design@software.co.th', phone: '02-678-9012', status: 'lead' },
-      { companyName: 'บริษัท เน็ตเวิร์ก โซลูชั่น', email: 'net@network.co.th', phone: '02-789-0123', status: 'qualified' },
-      { companyName: 'บริษัท เดต้า เซ็นเตอร์', email: 'data@datacenter.co.th', phone: '02-890-1234', status: 'send_quotation' },
-      { companyName: 'บริษัท คลาวด์ เทค', email: 'cloud@cloudtech.co.th', phone: '02-901-2345', status: 'payment' },
-      { companyName: 'บริษัท ไซเบอร์ ซิคเคิร์ตี้', email: 'security@cyber.co.th', phone: '02-012-3456', status: 'contract' },
-      { companyName: 'บริษัท มือถือ แอพ', email: 'mobile@mobile.co.th', phone: '02-111-2222', status: 'lead' },
-      { companyName: 'บริษัท อีคอมเมิร์ซ', email: 'shop@ecommerce.co.th', phone: '02-333-4444', status: 'qualified' },
+      { companyName: 'บริษัท เทคโนโลยี จำกัด', email: 'contact@tech.co.th', phone: '02-123-4567', status: stageKeys[0] },
+      { companyName: 'บริษัท ดิจิทัล โซลูชั่น', email: 'info@digital.co.th', phone: '02-234-5678', status: stageKeys[1] },
+      { companyName: 'บริษัท สมาร์ท ซิสเต็ม', email: 'hello@smart.co.th', phone: '02-345-6789', status: stageKeys[2] },
+      { companyName: 'บริษัท คราวด์ เซิร์ฟเวอร์', email: 'support@cloud.co.th', phone: '02-456-7890', status: stageKeys[3] },
+      { companyName: 'บริษัท อินเตอร์เน็ต จำกัด', email: 'admin@internet.co.th', phone: '02-567-8901', status: stageKeys[4] },
+      { companyName: 'บริษัท ซอฟต์แวร์ ดีไซน์', email: 'design@software.co.th', phone: '02-678-9012', status: stageKeys[0] },
+      { companyName: 'บริษัท เน็ตเวิร์ก โซลูชั่น', email: 'net@network.co.th', phone: '02-789-0123', status: stageKeys[1] },
+      { companyName: 'บริษัท เดต้า เซ็นเตอร์', email: 'data@datacenter.co.th', phone: '02-890-1234', status: stageKeys[2] },
+      { companyName: 'บริษัท คลาวด์ เทค', email: 'cloud@cloudtech.co.th', phone: '02-901-2345', status: stageKeys[3] },
+      { companyName: 'บริษัท ไซเบอร์ ซิคเคิร์ตี้', email: 'security@cyber.co.th', phone: '02-012-3456', status: stageKeys[4] },
+      { companyName: 'บริษัท มือถือ แอพ', email: 'mobile@mobile.co.th', phone: '02-111-2222', status: stageKeys[0] },
+      { companyName: 'บริษัท อีคอมเมิร์ซ', email: 'shop@ecommerce.co.th', phone: '02-333-4444', status: stageKeys[1] },
     ];
 
     for (const customer of customers) {

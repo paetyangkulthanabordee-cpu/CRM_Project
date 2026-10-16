@@ -40,20 +40,22 @@ export class PermissionsGuard implements CanActivate {
       .switchToHttp()
       .getRequest<RequestWithUser>();
 
-    const role = request.user?.role as UserRole | undefined;
+    const role = request.user?.role;
 
-    if (!role) {
+    if (!role || !Object.values(UserRole).includes(role as UserRole)) {
       throw new ForbiddenException(
         'ไม่สามารถตรวจสอบสิทธิ์การใช้งานได้',
       );
     }
 
-    if (role === UserRole.ADMIN) {
+    const validRole = role as UserRole;
+
+    if (validRole === UserRole.ADMIN) {
       return true;
     }
 
     const permissions =
-      await this.permissionsService.getForRole(role);
+      await this.permissionsService.getForRole(validRole);
 
     const allowed = required.every(
       (key) => permissions[key] === true,

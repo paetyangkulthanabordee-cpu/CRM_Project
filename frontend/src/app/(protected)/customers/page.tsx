@@ -47,8 +47,6 @@ import CustomerDetailDialog, {
   formatDate,
   initials,
 } from "@/components/CustomerDetailDialog";
-import DashboardSidebar from "@/components/DashboardSidebar";
-
 import { api, getErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/swr";
 
@@ -62,21 +60,13 @@ import type {
 
 import type { Permissions } from "@/lib/auth";
 
+import { useTranslations } from "next-intl";
+
 type DateFilter =
   | "all"
   | "today"
   | "7d"
   | "30d";
-
-const DATE_OPTIONS: {
-  value: DateFilter;
-  label: string;
-}[] = [
-  { value: "all", label: "All Date" },
-  { value: "today", label: "วันนี้" },
-  { value: "7d", label: "7 วันที่ผ่านมา" },
-  { value: "30d", label: "30 วันที่ผ่านมา" },
-];
 
 interface CustomerForm {
   companyName: string;
@@ -92,24 +82,7 @@ const emptyForm: CustomerForm = {
   status: "",
 };
 
-const customerSchema = z.object({
-  companyName: z
-    .string()
-    .min(1, "กรุณากรอกชื่อบริษัท"),
 
-  email: z
-    .string()
-    .refine(
-      (value) =>
-        value.trim() === "" ||
-        z.string().email().safeParse(value).success,
-      "รูปแบบ Email ไม่ถูกต้อง",
-    ),
-
-  phone: z.string(),
-
-  status: z.string().min(1, "กรุณาเลือกสถานะ"),
-});
 
 interface DocSummary {
   quotation: { count: number; total: number };
@@ -181,16 +154,90 @@ function summarizeDocs(
 }
 
 export default function CustomersPage() {
+  const t = useTranslations("customers");
+  const tCommon = useTranslations("common");
+
+  const customerSchema = z.object({
+    companyName: z
+      .string()
+      .min(1, t("companyNameRequired")),
+
+    email: z
+      .string()
+      .refine(
+        (value) =>
+          value.trim() === "" ||
+          z.string().email().safeParse(value).success,
+        t("invalidEmailFormat"),
+      ),
+
+    phone: z.string(),
+
+    status: z.string().min(1, t("statusRequired")),
+  });
+
+  const DATE_OPTIONS: {
+    value: DateFilter;
+    label: string;
+  }[] = [
+    { value: "all", label: t("dateFilter.all") },
+    { value: "today", label: t("dateFilter.today") },
+    { value: "7d", label: t("dateFilter.7d") },
+    { value: "30d", label: t("dateFilter.30d") },
+  ];
+
   const { user, permissions, ready } = useSession();
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] =
+    useState("");
+  const [dateFilter, setDateFilter] =
+    useState<DateFilter>("all");
+  const [page, setPage] = useState(1);
+  const rowsPerPage = 10;
+
+  const customersUrl = useMemo(() => {
+    if (!ready || !user) return null;
+
+    const params = new URLSearchParams();
+    params.set("limit", String(rowsPerPage));
+    params.set("page", String(page));
+
+    if (search.trim()) {
+      params.set("search", search.trim());
+    }
+    if (statusFilter) {
+      params.set("status", statusFilter);
+    }
+    if (dateFilter !== "all") {
+      const now = new Date();
+      const from = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      );
+
+      if (dateFilter === "7d") {
+        from.setDate(from.getDate() - 7);
+      } else if (dateFilter === "30d") {
+        from.setDate(from.getDate() - 30);
+      }
+
+      params.set(
+        "dateFrom",
+        from.toISOString().slice(0, 10),
+      );
+    }
+
+    return `/api/customers?${params.toString()}`;
+  }, [ready, user, page, search, statusFilter, dateFilter, rowsPerPage]);
 
   const {
     data: customersData,
     isLoading: loading,
     error: loadError,
     mutate: reloadCustomers,
-  } = useApi<{ data: Customer[]; total: number }>(
-    ready && user ? "/api/customers?limit=100" : null,
-  );
+  } = useApi<{ data: Customer[]; total: number }>(customersUrl);
   const { data: stagesData } = useApi<PipelineStage[]>(
     ready && user ? "/api/pipeline-stages" : null,
   );
@@ -206,14 +253,6 @@ export default function CustomersPage() {
     () => stagesData ?? [],
     [stagesData],
   );
-
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] =
-    useState("");
-  const [dateFilter, setDateFilter] =
-    useState<DateFilter>("all");
-  const [page, setPage] = useState(0);
-  const rowsPerPage = 10;
 
   const [detailTarget, setDetailTarget] =
     useState<Customer | null>(null);
@@ -246,93 +285,45 @@ export default function CustomersPage() {
     [],
   );
 
+  const handleMoveCustomer = useCallback(
+    async (customerId: number, status: string) => {
+      try {
+        await api.patch(`/api/customers/${customerId}`, { status });
+        showNotice(t("statusUpdated"), "success");
+        await reloadCustomers();
+      } catch (err) {
+        showNotice(getErrorMessage(err, t("statusUpdateError")), "error");
+        await reloadCustomers();
+      }
+    },
+    [t, reloadCustomers],
+  );
+
   const docSummary = useMemo(
     () => summarizeDocs(docsData?.data ?? []),
     [docsData],
   );
 
   /* =====================================================
-     FILTER
+     PAGINATION (server-side)
      ====================================================== */
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    const now = new Date();
-
-    const dateLimit =
-      dateFilter === "today"
-        ? new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-          ).getTime()
-        : dateFilter === "7d"
-          ? now.getTime() - 7 * 24 * 60 * 60 * 1000
-          : dateFilter === "30d"
-            ? now.getTime() -
-              30 * 24 * 60 * 60 * 1000
-            : null;
-
-    return customers.filter((customer) => {
-      const matchesSearch =
-        !query ||
-        [
-          customer.companyName,
-          customer.email,
-          customer.phone,
-          customer.assignedUser?.name,
-        ].some((value) =>
-          (value ?? "")
-            .toLowerCase()
-            .includes(query),
-        );
-
-      const matchesStatus =
-        !statusFilter ||
-        customer.status === statusFilter;
-
-      const matchesDate =
-        dateLimit === null ||
-        new Date(
-          customer.createdAt,
-        ).getTime() >= dateLimit;
-
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesDate
-      );
-    });
-  }, [
-    customers,
-    search,
-    statusFilter,
-    dateFilter,
-  ]);
+  const total = customersData?.total ?? 0;
+  const totalPages = Math.max(
+    1,
+    Math.ceil(total / rowsPerPage),
+  );
 
   const hasFilter =
     Boolean(search.trim()) ||
     Boolean(statusFilter) ||
     dateFilter !== "all";
 
-  const pageCount = Math.max(
-    1,
-    Math.ceil(filtered.length / rowsPerPage),
-  );
-
-  const safePage = Math.min(page, pageCount - 1);
-
-  const pagedCustomers = useMemo(() => {
-    const start = safePage * rowsPerPage;
-    return filtered.slice(start, start + rowsPerPage);
-  }, [filtered, safePage, rowsPerPage]);
-
   function resetFilters() {
     setSearch("");
     setStatusFilter("");
     setDateFilter("all");
-    setPage(0);
+    setPage(1);
   }
 
   const stageByKey = useMemo(() => {
@@ -352,7 +343,7 @@ export default function CustomersPage() {
     let received = 0;
     let outstanding = 0;
 
-    for (const customer of filtered) {
+    for (const customer of customers) {
       const summary =
         docSummary[customer.customerId];
 
@@ -367,7 +358,7 @@ export default function CustomersPage() {
     }
 
     return { quotation, invoiced, received, outstanding };
-  }, [filtered, docSummary]);
+  }, [customers, docSummary]);
 
   /* =====================================================
      ACTIONS
@@ -405,7 +396,7 @@ export default function CustomersPage() {
     if (!result.success) {
       setFormError(
         result.error.issues[0]?.message ||
-          "ข้อมูลไม่ถูกต้อง",
+          tCommon("error"),
       );
       return;
     }
@@ -429,14 +420,14 @@ export default function CustomersPage() {
         );
 
         showNotice(
-          "อัปเดตข้อมูลลูกค้าเรียบร้อยแล้ว",
+          t("customerUpdated"),
           "success",
         );
       } else {
         await api.post("/api/customers", payload);
 
         showNotice(
-          "เพิ่มลูกค้าใหม่เรียบร้อยแล้ว",
+          t("customerAdded"),
           "success",
         );
       }
@@ -447,7 +438,9 @@ export default function CustomersPage() {
       setFormError(
         getErrorMessage(
           err,
-          "ไม่สามารถบันทึกข้อมูลลูกค้าได้",
+          editing
+            ? t("customerUpdateError")
+            : t("customerAddError"),
         ),
       );
     } finally {
@@ -468,7 +461,7 @@ export default function CustomersPage() {
       );
 
       showNotice(
-        "ลบลูกค้าเรียบร้อยแล้ว",
+        t("customerDeleted"),
         "success",
       );
       setDeleteTarget(null);
@@ -477,7 +470,7 @@ export default function CustomersPage() {
       showNotice(
         getErrorMessage(
           err,
-          "ไม่สามารถลบลูกค้าได้",
+          t("customerDeleteError"),
         ),
         "error",
       );
@@ -500,7 +493,7 @@ export default function CustomersPage() {
       "Created",
     ];
 
-    const body = filtered.map((customer) => {
+    const body = customers.map((customer) => {
       const summary =
         docSummary[customer.customerId];
 
@@ -547,6 +540,8 @@ export default function CustomersPage() {
      RENDER
      ====================================================== */
 
+
+
   if (!user) {
     return (
       <Box
@@ -563,7 +558,7 @@ export default function CustomersPage() {
     );
   }
 
-  const fallbackPermissions: Permissions =
+  const _fallbackPermissions: Permissions =
     permissions ?? {
       dashboard: true,
       customers: true,
@@ -583,11 +578,6 @@ export default function CustomersPage() {
         bgcolor: "#f6f8fb",
       }}
     >
-      <DashboardSidebar
-        user={user}
-        permissions={fallbackPermissions}
-      />
-
       <Box
         component="main"
         sx={{
@@ -621,7 +611,7 @@ export default function CustomersPage() {
                 color: "#2563eb",
               }}
             >
-              CUSTOMER DATABASE
+              {t("customerDatabase")}
             </Typography>
 
             <Typography
@@ -634,7 +624,7 @@ export default function CustomersPage() {
                 lineHeight: 1.2,
               }}
             >
-              ลูกค้าทั้งหมด
+              {t("title")}
             </Typography>
 
             <Typography
@@ -644,9 +634,7 @@ export default function CustomersPage() {
                 color: "#64748b",
               }}
             >
-              คลิกแถวเพื่อดูรายละเอียด
-              เอกสาร และสถานะใน
-              Pipeline ของลูกค้า
+              {t("subtitle")}
             </Typography>
           </Box>
 
@@ -657,7 +645,7 @@ export default function CustomersPage() {
             <Button
               variant="outlined"
               startIcon={<DownloadIcon />}
-              disabled={filtered.length === 0}
+              disabled={customers.length === 0}
               onClick={downloadCsv}
               sx={{
                 textTransform: "none",
@@ -667,7 +655,7 @@ export default function CustomersPage() {
                 borderRadius: 2,
               }}
             >
-              Export
+              {t("export")}
             </Button>
 
             <Button
@@ -686,7 +674,7 @@ export default function CustomersPage() {
                 },
               }}
             >
-              เพิ่มลูกค้าใหม่
+              {t("addNew")}
             </Button>
           </Stack>
         </Box>
@@ -702,36 +690,38 @@ export default function CustomersPage() {
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, 1fr)",
-              xl: "repeat(4, 1fr)",
+              lg: "repeat(4, 1fr)",
             },
             gap: 2,
           }}
         >
           {[
             {
-              label: "ลูกค้าที่แสดง",
-              value: `${filtered.length}`,
-              sub: `จากทั้งหมด ${customers.length} ราย`,
+              label: t("stats.showing"),
+              value: `${total}`,
+              sub: t("stats.fromTotal", {
+                total: total,
+              }),
               color: "#2563eb",
             },
             {
-              label: "Quotation รวม",
+              label: t("stats.quotationTotal"),
               value: formatBaht(totals.quotation),
-              sub: "มูลค่าใบเสนอราคาทั้งหมด",
+              sub: t("stats.quotationSub"),
               color: "#0f62fe",
             },
             {
-              label: "Invoice รวม",
+              label: t("stats.invoiceTotal"),
               value: formatBaht(totals.invoiced),
-              sub: `รับแล้ว ${formatBaht(
-                totals.received,
-              )}`,
+              sub: t("stats.invoiceSub", {
+                amount: formatBaht(totals.received),
+              }),
               color: "#f97316",
             },
             {
-              label: "ค้างชำระ",
+              label: t("stats.outstanding"),
               value: formatBaht(totals.outstanding),
-              sub: "Invoice ที่ยังไม่มี Receipt",
+              sub: t("stats.outstandingSub"),
               color: "#dc2626",
             },
           ].map((stat) => (
@@ -803,7 +793,7 @@ export default function CustomersPage() {
             onChange={(event) =>
               setSearch(event.target.value)
             }
-            placeholder="ค้นหาบริษัท อีเมล เบอร์โทร หรือชื่อ Sales..."
+            placeholder={t("searchPlaceholder")}
             slotProps={{
               input: {
                 startAdornment: (
@@ -818,7 +808,7 @@ export default function CustomersPage() {
                     <IconButton
                       size="small"
                       edge="end"
-                      aria-label="ล้างการค้นหา"
+                      aria-label={t("clearFilters")}
                       onClick={() =>
                         setSearch("")
                       }
@@ -862,7 +852,7 @@ export default function CustomersPage() {
             }}
           >
             <MenuItem value="all">
-              ทุกสถานะ
+              {t("allStatuses")}
             </MenuItem>
 
             {stages.map((stage) => (
@@ -914,7 +904,7 @@ export default function CustomersPage() {
                 color: "#64748b",
               }}
             >
-              ล้างตัวกรอง
+              {t("clearFilters")}
             </Button>
           )}
 
@@ -927,14 +917,15 @@ export default function CustomersPage() {
               whiteSpace: "nowrap",
             }}
           >
-            แสดง {filtered.length} /{" "}
-            {customers.length} รายการ
+            {t("showing")} {customers.length}{" "}
+            {t("of")} {total}{" "}
+            {t("entries")}
           </Typography>
         </Card>
 
         {loadError && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            ไม่สามารถโหลดรายชื่อลูกค้าได้
+            {t("loadError")}
           </Alert>
         )}
 
@@ -963,7 +954,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    บริษัท / ลูกค้า
+                    {t("companyCustomer")}
                   </TableCell>
 
                   <TableCell
@@ -972,7 +963,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    Sales ผู้รับผิดชอบ
+                    {t("salesResponsible")}
                   </TableCell>
 
                   <TableCell
@@ -981,7 +972,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    สถานะใน Pipeline
+                    {t("pipelineStatus")}
                   </TableCell>
 
                   <TableCell
@@ -990,7 +981,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    เอกสาร
+                    {t("documentsColumn")}
                     <Typography
                       component="span"
                       variant="caption"
@@ -1000,7 +991,7 @@ export default function CustomersPage() {
                         color: "#94a3b8",
                       }}
                     >
-                      QT / IV / RC
+                      {t("documentsSub")}
                     </Typography>
                   </TableCell>
 
@@ -1011,7 +1002,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    ค้างชำระ
+                    {t("outstanding")}
                   </TableCell>
 
                   <TableCell
@@ -1020,7 +1011,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    วันที่เพิ่ม
+                    {t("dateAdded")}
                   </TableCell>
 
                   <TableCell
@@ -1030,7 +1021,7 @@ export default function CustomersPage() {
                       color: "#475569",
                     }}
                   >
-                    จัดการ
+                    {t("actions")}
                   </TableCell>
                 </TableRow>
               </TableHead>
@@ -1053,7 +1044,7 @@ export default function CustomersPage() {
                       )}
                     </TableRow>
                   ))
-                ) : filtered.length === 0 ? (
+                ) : customers.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={7}>
                       <Box
@@ -1077,8 +1068,8 @@ export default function CustomersPage() {
                           }}
                         >
                           {hasFilter
-                            ? "ไม่พบผลลัพธ์"
-                            : "ยังไม่มีลูกค้า"}
+                            ? t("noResults")
+                            : t("noCustomers")}
                         </Typography>
 
                         <Typography
@@ -1089,8 +1080,8 @@ export default function CustomersPage() {
                           }}
                         >
                           {hasFilter
-                            ? "ไม่พบลูกค้าที่ตรงกับตัวกรอง"
-                            : "เริ่มเพิ่มลูกค้าตัวแรกได้จากปุ่มเพิ่มลูกค้าใหม่"}
+                            ? t("noResultsHint")
+                            : t("noCustomersHint")}
                         </Typography>
 
                         {hasFilter && (
@@ -1101,14 +1092,14 @@ export default function CustomersPage() {
                               textTransform: "none",
                             }}
                           >
-                            ล้างตัวกรอง
+                            {t("clearFilters")}
                           </Button>
                         )}
                       </Box>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  pagedCustomers.map((customer) => {
+                  customers.map((customer) => {
                     const stage =
                       stageByKey[customer.status];
 
@@ -1196,7 +1187,7 @@ export default function CustomersPage() {
                               variant="body2"
                               sx={{ color: "#94a3b8" }}
                             >
-                              ยังไม่ระบุ
+                              {t("unassigned")}
                             </Typography>
                           )}
                         </TableCell>
@@ -1308,7 +1299,7 @@ export default function CustomersPage() {
                           >
                             <IconButton
                               size="small"
-                              aria-label="ดูรายละเอียด"
+                              aria-label={t("viewDetails")}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setDetailTarget(
@@ -1324,7 +1315,7 @@ export default function CustomersPage() {
 
                             <IconButton
                               size="small"
-                              aria-label="แก้ไขลูกค้า"
+                              aria-label={t("editCustomer")}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 openEdit(customer);
@@ -1338,7 +1329,7 @@ export default function CustomersPage() {
 
                             <IconButton
                               size="small"
-                              aria-label="ลบลูกค้า"
+                              aria-label={t("deleteCustomer")}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setDeleteTarget(
@@ -1371,9 +1362,9 @@ export default function CustomersPage() {
           >
             <IconButton
               size="small"
-              disabled={safePage === 0}
-              onClick={() => setPage(safePage - 1)}
-              aria-label="หน้าก่อนหน้า"
+              disabled={page <= 1}
+              onClick={() => setPage(page - 1)}
+              aria-label={t("previousPage")}
               sx={{
                 color: "#64748b",
                 "&.Mui-disabled": {
@@ -1386,8 +1377,8 @@ export default function CustomersPage() {
 
             {(() => {
               const pages: (number | "...")[] = [];
-              const total = pageCount;
-              const current = safePage + 1;
+              const total = totalPages;
+              const current = page;
 
               if (total <= 7) {
                 for (let i = 1; i <= total; i++) {
@@ -1434,7 +1425,7 @@ export default function CustomersPage() {
                   <Button
                     key={p}
                     size="small"
-                    onClick={() => setPage(p - 1)}
+                    onClick={() => setPage(p)}
                     sx={{
                       minWidth: 32,
                       height: 32,
@@ -1465,12 +1456,12 @@ export default function CustomersPage() {
 
             <IconButton
               size="small"
-              disabled={safePage >= pageCount - 1}
-              onClick={() => setPage(safePage + 1)}
-              aria-label="หน้าถัดไป"
+              disabled={page >= totalPages}
+              onClick={() => setPage(page + 1)}
+              aria-label={t("nextPage")}
               sx={{
                 color: "#64748b",
-                "&.Mui-disabled": {
+                "&.MuiDisabled": {
                   color: "#cbd5e1",
                 },
               }}
@@ -1490,6 +1481,7 @@ export default function CustomersPage() {
           customer={detailTarget}
           stages={stages}
           onClose={() => setDetailTarget(null)}
+          onMove={handleMoveCustomer}
         />
       )}
 
@@ -1506,8 +1498,8 @@ export default function CustomersPage() {
         <form onSubmit={handleSubmit}>
           <DialogTitle sx={{ fontWeight: 800 }}>
             {editing
-              ? "แก้ไขลูกค้า"
-              : "เพิ่มลูกค้าใหม่"}
+              ? t("editCustomerTitle")
+              : t("addCustomerTitle")}
           </DialogTitle>
 
           <DialogContent>
@@ -1520,7 +1512,7 @@ export default function CustomersPage() {
 
               <TextField
                 fullWidth
-                label="ชื่อบริษัท"
+                label={t("companyName")}
                 value={form.companyName}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -1535,7 +1527,7 @@ export default function CustomersPage() {
 
               <TextField
                 fullWidth
-                label="อีเมล"
+                label={t("email")}
                 type="email"
                 value={form.email}
                 onChange={(event) =>
@@ -1549,7 +1541,7 @@ export default function CustomersPage() {
 
               <TextField
                 fullWidth
-                label="เบอร์โทร"
+                label={t("phone")}
                 value={form.phone}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -1563,7 +1555,7 @@ export default function CustomersPage() {
               <TextField
                 fullWidth
                 select
-                label="สถานะใน Pipeline"
+                label={t("pipelineStatusLabel")}
                 value={form.status}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -1591,7 +1583,7 @@ export default function CustomersPage() {
               disabled={saving}
               sx={{ textTransform: "none" }}
             >
-              ยกเลิก
+              {t("cancel")}
             </Button>
 
             <Button
@@ -1606,9 +1598,9 @@ export default function CustomersPage() {
                   color="inherit"
                 />
               ) : editing ? (
-                "บันทึกการแก้ไข"
+                t("save")
               ) : (
-                "เพิ่มลูกค้า"
+                t("addCustomer")
               )}
             </Button>
           </DialogActions>
@@ -1626,7 +1618,7 @@ export default function CustomersPage() {
         fullWidth
       >
         <DialogTitle sx={{ fontWeight: 800 }}>
-          ยืนยันการลบ
+          {t("deleteConfirmTitle")}
         </DialogTitle>
 
         <DialogContent>
@@ -1634,12 +1626,9 @@ export default function CustomersPage() {
             component="div"
             variant="body2"
           >
-            ต้องการลบลูกค้า{" "}
-            <strong>
-              {deleteTarget?.companyName}
-            </strong>{" "}
-            ใช่หรือไม่?
-            การดำเนินการนี้ไม่สามารถย้อนกลับได้
+            {t("deleteConfirmMessage", {
+              name: deleteTarget?.companyName ?? "",
+            })}
           </Typography>
         </DialogContent>
 
@@ -1649,7 +1638,7 @@ export default function CustomersPage() {
             disabled={deleting}
             sx={{ textTransform: "none" }}
           >
-            ยกเลิก
+            {t("cancel")}
           </Button>
 
           <Button
@@ -1659,7 +1648,7 @@ export default function CustomersPage() {
             onClick={() => void handleDelete()}
             sx={{ textTransform: "none" }}
           >
-            {deleting ? "กำลังลบ..." : "ลบ"}
+            {deleting ? t("deleting") : t("delete")}
           </Button>
         </DialogActions>
       </Dialog>

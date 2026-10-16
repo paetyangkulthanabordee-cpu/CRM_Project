@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { FormEvent } from "react";
 
 import { useRouter } from "next/navigation";
 
 import { z } from "zod";
+
+import { useTranslations } from "next-intl";
 
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -36,8 +38,6 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-
-import DashboardSidebar from "@/components/DashboardSidebar";
 
 import { api, getErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/swr";
@@ -104,31 +104,7 @@ const ROLE_STYLE: Record<
   SALES: { color: "#15803d", bg: "#e6f8ec" },
 };
 
-const userSchema = z.object({
-  name: z
-    .string()
-    .min(1, "กรุณากรอกชื่อผู้ใช้"),
 
-  email: z
-    .string()
-    .min(1, "กรุณากรอกอีเมล")
-    .refine(
-      (value) =>
-        z.string().email().safeParse(value)
-          .success,
-      "รูปแบบ Email ไม่ถูกต้อง",
-    ),
-
-  password: z.string().min(
-    6,
-    "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร",
-  ),
-
-  role: z.string().min(
-    1,
-    "กรุณาเลือกสิทธิ์",
-  ),
-});
 
 function initials(name: string) {
   const trimmed = name.trim();
@@ -146,7 +122,35 @@ function initials(name: string) {
 
 export default function UsersPage() {
   const router = useRouter();
+  const t = useTranslations("users");
+  const tCommon = useTranslations("common");
   const { user, permissions, ready } = useSession();
+
+  const userSchema = z.object({
+    name: z
+      .string()
+      .min(1, t("nameRequired")),
+
+    email: z
+      .string()
+      .min(1, t("emailRequired"))
+      .refine(
+        (value) =>
+          z.string().email().safeParse(value)
+            .success,
+        t("invalidEmailFormat"),
+      ),
+
+    password: z.string().min(
+      6,
+      t("passwordMinLength"),
+    ),
+
+    role: z.string().min(
+      1,
+      t("roleRequired"),
+    ),
+  });
 
   const {
     data: usersData,
@@ -196,9 +200,14 @@ export default function UsersPage() {
     [],
   );
 
-  if (!user) {
-    router.replace("/login");
-  }
+  useEffect(() => {
+    if (!ready) return;
+
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+  }, [ready, user, router]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -262,7 +271,7 @@ export default function UsersPage() {
             (value) =>
               value === "" ||
               value.length >= 6,
-            "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร",
+            t("passwordMinLength"),
           )
       : userSchema.shape.password;
 
@@ -273,7 +282,7 @@ export default function UsersPage() {
     if (!result.success) {
       setFormError(
         result.error.issues[0]?.message ||
-          "ข้อมูลไม่ถูกต้อง",
+          tCommon("error"),
       );
       return;
     }
@@ -299,7 +308,7 @@ export default function UsersPage() {
         );
 
         showNotice(
-          "อัปเดตข้อมูลผู้ใช้เรียบร้อยแล้ว",
+          t("userUpdated"),
           "success",
         );
       } else {
@@ -311,7 +320,7 @@ export default function UsersPage() {
         });
 
         showNotice(
-          "เพิ่มผู้ใช้ใหม่เรียบร้อยแล้ว",
+          t("userAdded"),
           "success",
         );
       }
@@ -322,7 +331,7 @@ export default function UsersPage() {
       setFormError(
         getErrorMessage(
           err,
-          "ไม่สามารถบันทึกข้อมูลผู้ใช้ได้",
+          t("userSaveError"),
         ),
       );
     } finally {
@@ -343,7 +352,7 @@ export default function UsersPage() {
       );
 
       showNotice(
-        "ลบผู้ใช้เรียบร้อยแล้ว",
+        t("userDeleted"),
         "success",
       );
       setDeleteTarget(null);
@@ -352,7 +361,7 @@ export default function UsersPage() {
       showNotice(
         getErrorMessage(
           err,
-          "ไม่สามารถลบผู้ใช้ได้",
+          t("userDeleteError"),
         ),
         "error",
       );
@@ -361,6 +370,8 @@ export default function UsersPage() {
       setDeleting(false);
     }
   }
+
+
 
   if (!user) {
     return (
@@ -378,7 +389,7 @@ export default function UsersPage() {
     );
   }
 
-  const fallbackPermissions: Permissions =
+  const _fallbackPermissions: Permissions =
     permissions ?? {
       dashboard: true,
       customers: true,
@@ -402,11 +413,6 @@ export default function UsersPage() {
         bgcolor: "#f6f8fb",
       }}
     >
-      <DashboardSidebar
-        user={user}
-        permissions={fallbackPermissions}
-      />
-
       <Box
         component="main"
         sx={{
@@ -440,7 +446,7 @@ export default function UsersPage() {
                 color: "#2563eb",
               }}
             >
-              ADMINISTRATION
+              {t("administration")}
             </Typography>
 
             <Typography
@@ -453,7 +459,7 @@ export default function UsersPage() {
                 lineHeight: 1.2,
               }}
             >
-              ผู้ใช้งานระบบ (Users)
+              {t("title")}
             </Typography>
 
             <Typography
@@ -463,9 +469,7 @@ export default function UsersPage() {
                 color: "#64748b",
               }}
             >
-              เพิ่ม แก้ไข และลบบัญชีผู้ใช้
-              พร้อมกำหนดสิทธิ์ว่าจะเข้าถึง
-              โมดูลใดได้บ้าง
+              {t("subtitle")}
             </Typography>
           </Box>
 
@@ -486,21 +490,19 @@ export default function UsersPage() {
               },
             }}
           >
-            เพิ่มผู้ใช้ใหม่
+            {t("addNew")}
           </Button>
         </Box>
 
         {!canManage && (
           <Alert severity="warning" sx={{ mb: 2 }}>
-            หน้านี้ดูได้แบบอ่านอย่างเดียว
-            เฉพาะผู้ดูแลระบบ (Admin)
-            เท่านั้นที่จะเพิ่มหรือแก้ไขผู้ใช้ได้
+            {t("readOnly")}
           </Alert>
         )}
 
         {loadError && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            ไม่สามารถโหลดข้อมูลผู้ใช้ได้
+            {t("loadError")}
           </Alert>
         )}
 
@@ -515,22 +517,22 @@ export default function UsersPage() {
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, 1fr)",
-              xl: "repeat(4, 1fr)",
+              lg: "repeat(4, 1fr)",
             },
             gap: 2,
           }}
         >
           {[
             {
-              label: "ผู้ใช้ทั้งหมด",
+              label: t("stats.total"),
               value: `${users.length}`,
-              sub: `แสดง ${filtered.length} รายหลังค้นหา`,
+              sub: t("stats.showingAfterSearch", { count: filtered.length }),
               color: "#2563eb",
             },
             ...ROLES.map((item) => ({
               label: item.label,
               value: `${counts[item.role]}`,
-              sub: "บัญชีในสิทธิ์นี้",
+              sub: t("stats.accountsInRole"),
               color: item.color,
             })),
           ].map((stat) => (
@@ -600,7 +602,7 @@ export default function UsersPage() {
             onChange={(event) =>
               setSearch(event.target.value)
             }
-            placeholder="ค้นหาชื่อ อีเมล หรือสิทธิ์..."
+            placeholder={t("searchPlaceholder")}
             sx={{
               minWidth: { xs: "100%", md: 320 },
             }}
@@ -630,7 +632,7 @@ export default function UsersPage() {
                       color: "#475569",
                     }}
                   >
-                    ชื่อผู้ใช้
+                    {t("userName")}
                   </TableCell>
 
                   <TableCell
@@ -639,7 +641,7 @@ export default function UsersPage() {
                       color: "#475569",
                     }}
                   >
-                    อีเมล
+                    {t("email")}
                   </TableCell>
 
                   <TableCell
@@ -648,7 +650,7 @@ export default function UsersPage() {
                       color: "#475569",
                     }}
                   >
-                    สิทธิ์
+                    {t("role")}
                   </TableCell>
 
                   <TableCell
@@ -657,7 +659,7 @@ export default function UsersPage() {
                       color: "#475569",
                     }}
                   >
-                    วันที่สร้าง
+                    {t("created")}
                   </TableCell>
 
                   <TableCell
@@ -667,7 +669,7 @@ export default function UsersPage() {
                       color: "#475569",
                     }}
                   >
-                    จัดการ
+                    {t("actions")}
                   </TableCell>
                 </TableRow>
               </TableHead>
@@ -708,8 +710,8 @@ export default function UsersPage() {
                           }}
                         >
                           {search.trim()
-                            ? "ไม่พบผู้ใช้ที่ตรงกับคำค้น"
-                            : "ยังไม่มีผู้ใช้"}
+                            ? t("noResults")
+                            : t("noUsers")}
                         </Typography>
 
                         <Typography
@@ -720,8 +722,8 @@ export default function UsersPage() {
                           }}
                         >
                           {search.trim()
-                            ? "ลองเปลี่ยนคำค้นหา"
-                            : "เริ่มเพิ่มผู้ใช้ได้จากปุ่มเพิ่มผู้ใช้ใหม่"}
+                            ? t("noResultsHint")
+                            : t("noUsersHint")}
                         </Typography>
                       </Box>
                     </TableCell>
@@ -782,7 +784,7 @@ export default function UsersPage() {
                                     color: "#94a3b8",
                                   }}
                                 >
-                                  บัญชีของคุณ
+                                  {t("selfAccount")}
                                 </Typography>
                               )}
                             </Box>
@@ -845,7 +847,7 @@ export default function UsersPage() {
                           >
                             <IconButton
                               size="small"
-                              aria-label="แก้ไขผู้ใช้"
+                              aria-label={t("editUser")}
                               disabled={!canManage}
                               onClick={() =>
                                 openEdit(item)
@@ -860,7 +862,7 @@ export default function UsersPage() {
                             {!self && (
                               <IconButton
                                 size="small"
-                                aria-label="ลบผู้ใช้"
+                                aria-label={t("delete")}
                                 disabled={
                                   !canManage
                                 }
@@ -893,10 +895,7 @@ export default function UsersPage() {
             color: "#94a3b8",
           }}
         >
-          หมายเหตุ: ผู้ใช้ที่ยังมีลูกค้าที่ระบุผู้รับผิดชอบ
-          หรือมีเอกสารที่สร้างอยู่จะลบไม่ได้
-          ต้องย้ายงานออกจากผู้ใช้นั้นก่อน และไม่สามารถลบ
-          หรือเปลี่ยนสิทธิ์ของบัญชีตัวเองได้
+          {t("note")}
         </Typography>
       </Box>
 
@@ -913,8 +912,8 @@ export default function UsersPage() {
         <form onSubmit={handleSubmit}>
           <DialogTitle sx={{ fontWeight: 800 }}>
             {editing
-              ? "แก้ไขผู้ใช้"
-              : "เพิ่มผู้ใช้ใหม่"}
+              ? t("editUser")
+              : t("addUser")}
           </DialogTitle>
 
           <DialogContent>
@@ -927,7 +926,7 @@ export default function UsersPage() {
 
               <TextField
                 fullWidth
-                label="ชื่อผู้ใช้"
+                label={t("name")}
                 value={form.name}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -941,7 +940,7 @@ export default function UsersPage() {
 
               <TextField
                 fullWidth
-                label="อีเมล"
+                label={t("email")}
                 type="email"
                 value={form.email}
                 onChange={(event) =>
@@ -958,8 +957,8 @@ export default function UsersPage() {
                 fullWidth
                 label={
                   editing
-                    ? "ตั้งรหัสผ่านใหม่"
-                    : "รหัสผ่าน"
+                    ? t("newPassword")
+                    : t("password")
                 }
                 type="password"
                 value={form.password}
@@ -971,8 +970,8 @@ export default function UsersPage() {
                 }
                 helperText={
                   editing
-                    ? "เว้นว่างไว้ถ้าไม่ต้องการเปลี่ยนรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)"
-                    : "อย่างน้อย 6 ตัวอักษร"
+                    ? t("passwordHint")
+                    : t("passwordRequired")
                 }
                 disabled={saving}
                 required={!editing}
@@ -981,7 +980,7 @@ export default function UsersPage() {
               <TextField
                 fullWidth
                 select
-                label="สิทธิ์การใช้งาน"
+                label={t("roleLabel")}
                 value={form.role}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -996,7 +995,7 @@ export default function UsersPage() {
                 }
                 helperText={
                   editing !== null && isSelf
-                    ? "ไม่สามารถเปลี่ยนสิทธิ์ของบัญชีตัวเองได้"
+                    ? t("cannotChangeOwnRole")
                     : undefined
                 }
               >
@@ -1018,7 +1017,7 @@ export default function UsersPage() {
               disabled={saving}
               sx={{ textTransform: "none" }}
             >
-              ยกเลิก
+              {t("cancel")}
             </Button>
 
             <Button
@@ -1033,9 +1032,9 @@ export default function UsersPage() {
                   color="inherit"
                 />
               ) : editing ? (
-                "บันทึกการแก้ไข"
+                t("save")
               ) : (
-                "เพิ่มผู้ใช้"
+                t("addUserButton")
               )}
             </Button>
           </DialogActions>
@@ -1053,15 +1052,12 @@ export default function UsersPage() {
         fullWidth
       >
         <DialogTitle sx={{ fontWeight: 800 }}>
-          ยืนยันการลบผู้ใช้
+          {t("deleteConfirmTitle")}
         </DialogTitle>
 
         <DialogContent>
           <Typography component="div" variant="body2">
-            ต้องการลบผู้ใช้{" "}
-            <strong>{deleteTarget?.name}</strong>{" "}
-            ({deleteTarget?.email}) ใช่หรือไม่?
-            การดำเนินการนี้ไม่สามารถย้อนกลับได้
+            {t("deleteConfirmMessage", { name: deleteTarget?.name ?? "", email: deleteTarget?.email ?? "" })}
           </Typography>
         </DialogContent>
 
@@ -1071,7 +1067,7 @@ export default function UsersPage() {
             disabled={deleting}
             sx={{ textTransform: "none" }}
           >
-            ยกเลิก
+            {t("cancel")}
           </Button>
 
           <Button
@@ -1081,7 +1077,7 @@ export default function UsersPage() {
             onClick={() => void handleDelete()}
             sx={{ textTransform: "none" }}
           >
-            {deleting ? "กำลังลบ..." : "ลบ"}
+            {deleting ? t("deleting") : t("delete")}
           </Button>
         </DialogActions>
       </Dialog>
