@@ -31,8 +31,10 @@ import type { UserRole } from "@/lib/auth";
 type ModuleKey =
   | "dashboard"
   | "customers"
-  | "salesPipeline"
+  | "orderPipeline"
   | "documents"
+  | "products"
+  | "productManagement"
   | "reports"
   | "administration";
 
@@ -77,8 +79,11 @@ function toSessionPermissions(
   return {
     dashboard: row.dashboard === true,
     customers: row.customers === true,
-    salesPipeline: row.salesPipeline === true,
+    orderPipeline: row.orderPipeline === true,
     documents: row.documents === true,
+    products: row.products === true,
+    productManagement:
+      row.productManagement === true,
     reports: row.reports === true,
     administration,
     permissions: administration,
@@ -106,16 +111,28 @@ export default function PermissionsPage() {
         hint: t("moduleHints.customers"),
       },
       {
-        key: "salesPipeline",
-        label: t("modules.salesPipeline"),
-        labelEn: "Sales Pipeline",
-        hint: t("moduleHints.salesPipeline"),
+        key: "orderPipeline",
+        label: t("modules.orderPipeline"),
+        labelEn: "Order Pipeline",
+        hint: t("moduleHints.orderPipeline"),
       },
       {
         key: "documents",
         label: t("modules.documents"),
         labelEn: t("modules.documentsEn"),
         hint: t("moduleHints.documents"),
+      },
+      {
+        key: "products",
+        label: t("modules.products"),
+        labelEn: t("modules.productsEn"),
+        hint: t("moduleHints.products"),
+      },
+      {
+        key: "productManagement",
+        label: t("modules.productManagement"),
+        labelEn: "Product Management",
+        hint: t("moduleHints.productManagement"),
       },
       {
         key: "reports",

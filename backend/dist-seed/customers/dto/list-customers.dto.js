@@ -7,10 +7,14 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-import { IsBoolean, IsOptional, IsString, } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, } from 'class-validator';
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export class ListCustomersDto {
     status;
     search;
+    page;
+    limit;
+    dateFrom;
     onlyInactive;
 }
 __decorate([
@@ -23,6 +27,23 @@ __decorate([
     IsString(),
     __metadata("design:type", String)
 ], ListCustomersDto.prototype, "search", void 0);
+__decorate([
+    IsOptional(),
+    IsInt(),
+    __metadata("design:type", Number)
+], ListCustomersDto.prototype, "page", void 0);
+__decorate([
+    IsOptional(),
+    IsInt(),
+    __metadata("design:type", Number)
+], ListCustomersDto.prototype, "limit", void 0);
+__decorate([
+    IsOptional(),
+    Matches(DATE_PATTERN, {
+        message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
+    }),
+    __metadata("design:type", String)
+], ListCustomersDto.prototype, "dateFrom", void 0);
 __decorate([
     IsOptional(),
     IsBoolean(),

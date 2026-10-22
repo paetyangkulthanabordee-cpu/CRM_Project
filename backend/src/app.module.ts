@@ -17,6 +17,9 @@ import { ReceiptsModule } from './receipts/receipts.module.js';
 import { PermissionsModule } from './permissions/permissions.module.js';
 import { AuditLogsModule } from './audit-logs/audit-logs.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { ProductsModule } from './products/products.module.js';
+import { OrderPipelineModule } from './order-pipeline/order-pipeline.module.js';
+import { IssueOrdersModule } from './issue-orders/issue-orders.module.js';
 
 const requiredEnvVars = [
   'DATABASE_HOST',
@@ -62,6 +65,9 @@ if (missingEnvVars.length > 0) {
     PipelineStagesModule,
     AuditLogsModule,
     DashboardModule,
+    ProductsModule,
+    OrderPipelineModule,
+    IssueOrdersModule,
   ],
 
   controllers: [AppController],

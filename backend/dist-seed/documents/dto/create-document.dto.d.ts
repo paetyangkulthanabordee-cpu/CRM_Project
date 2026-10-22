@@ -4,7 +4,6 @@ export declare class CreateDocumentDto {
     issueDate?: string;
     dueDate?: string;
     amount: number;
-    status?: string;
     note?: string;
     refDocId?: number;
 }

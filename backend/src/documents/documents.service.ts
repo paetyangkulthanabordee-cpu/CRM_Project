@@ -13,9 +13,7 @@ import { Customer } from '../customers/entities/customer.entity.js';
 import { User } from '../users/entities/user.entity.js';
 
 import {
-  DEFAULT_STATUS,
   DOC_PREFIXES,
-  DOCUMENT_STATUSES,
   REF_TYPE,
 } from './document-types.js';
 
@@ -54,12 +52,6 @@ export class DocumentsService {
     if (query.type) {
       builder.andWhere('doc.docType = :type', {
         type: query.type,
-      });
-    }
-
-    if (query.status) {
-      builder.andWhere('doc.status = :status', {
-        status: query.status,
       });
     }
 
@@ -119,9 +111,6 @@ export class DocumentsService {
 
     if (query.type) {
       countBuilder.andWhere('doc.docType = :type', { type: query.type });
-    }
-    if (query.status) {
-      countBuilder.andWhere('doc.status = :status', { status: query.status });
     }
     if (query.dateFrom) {
       countBuilder.andWhere('doc.issueDate >= :dateFrom', {
@@ -189,18 +178,13 @@ export class DocumentsService {
       docType: DocType;
       count: number;
       total: string | number;
-      pendingAmount: string | number;
     }[] = await this.documentsRepository
       .createQueryBuilder('doc')
       .select('doc.docType', 'docType')
       .addSelect('COUNT(*)::int', 'count')
       .addSelect(
-        `COALESCE(SUM(doc.amount) FILTER (WHERE doc.status NOT IN ('cancelled', 'void')), 0)`,
+        'COALESCE(SUM(doc.amount), 0)',
         'total',
-      )
-      .addSelect(
-        `COALESCE(SUM(doc.amount) FILTER (WHERE doc.status = 'pending'), 0)`,
-        'pendingAmount',
       )
       .groupBy('doc.docType')
       .getRawMany();
@@ -210,23 +194,23 @@ export class DocumentsService {
       {
         count: number;
         total: number;
-        pendingAmount: number;
       }
     > = {
       quotation: {
         count: 0,
         total: 0,
-        pendingAmount: 0,
       },
       invoice: {
         count: 0,
         total: 0,
-        pendingAmount: 0,
       },
       receipt: {
         count: 0,
         total: 0,
-        pendingAmount: 0,
+      },
+      purchase_order: {
+        count: 0,
+        total: 0,
       },
     };
 
@@ -234,7 +218,6 @@ export class DocumentsService {
       result[row.docType] = {
         count: Number(row.count),
         total: Number(row.total),
-        pendingAmount: Number(row.pendingAmount),
       };
     }
 
@@ -247,7 +230,6 @@ export class DocumentsService {
   ) {
     const docType = dto.docType as DocType;
 
-    this.assertStatus(docType, dto.status);
     await this.assertCustomer(dto.customerId);
 
     const ref = await this.resolveRef(
@@ -277,25 +259,11 @@ export class DocumentsService {
             refDocId: ref?.docId ?? null,
             refDocNo: ref?.docNo ?? null,
             amount: dto.amount,
-            status:
-              dto.status ?? DEFAULT_STATUS[docType],
             note: dto.note ?? null,
             createdBy: userId,
           });
 
           const created = await manager.save(doc);
-
-          if (
-            docType === 'receipt' &&
-            ref &&
-            ref.docType === 'invoice'
-          ) {
-            await manager.update(
-              DocumentRecord,
-              ref.docId,
-              { status: 'paid' },
-            );
-          }
 
           await this.customersService.recalcPurchaseCount(
             dto.customerId,
@@ -322,8 +290,6 @@ export class DocumentsService {
         'ไม่พบเอกสารนี้',
       );
     }
-
-    this.assertStatus(doc.docType, dto.status);
 
     if (dto.customerId !== undefined) {
       await this.assertCustomer(dto.customerId);
@@ -386,20 +352,6 @@ export class DocumentsService {
     return { docId, deleted: true };
   }
 
-  private assertStatus(
-    docType: DocType,
-    status?: string,
-  ) {
-    if (
-      status &&
-      !DOCUMENT_STATUSES[docType].includes(status)
-    ) {
-      throw new BadRequestException(
-        'สถานะไม่ถูกต้องสำหรับเอกสารชนิดนี้',
-      );
-    }
-  }
-
   private async assertCustomer(customerId: number) {
     const exists =
       await this.customersRepository.exists({
@@ -443,15 +395,6 @@ export class DocumentsService {
     if (ref.docType !== expected) {
       throw new BadRequestException(
         'เอกสารอ้างอิงชนิดไม่ถูกต้อง',
-      );
-    }
-
-    if (
-      ref.status === 'cancelled' ||
-      ref.status === 'void'
-    ) {
-      throw new BadRequestException(
-        'เอกสารอ้างอิงถูกยกเลิกแล้ว',
       );
     }
 

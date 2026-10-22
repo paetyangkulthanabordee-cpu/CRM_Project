@@ -53,9 +53,6 @@ export class DocumentRecord {
   })
   amount: number;
 
-  @Column({ length: 20 })
-  status: string;
-
   @Column({ type: 'text', nullable: true })
   note: string | null;
 

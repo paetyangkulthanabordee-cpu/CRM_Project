@@ -4,6 +4,20 @@ import createNextIntlPlugin from "next-intl/plugin";
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    return [
+      {
+        source: "/documents",
+        destination: "/customers",
+        permanent: false,
+      },
+      {
+        source: "/product-types",
+        destination: "/product-groups",
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {
@@ -23,8 +37,8 @@ const nextConfig: NextConfig = {
         destination: "http://localhost:3001/api/users/:path*",
       },
       {
-        source: "/documents/:path*",
-        destination: "http://localhost:3001/api/documents/:path*",
+        source: "/products/:path*",
+        destination: "http://localhost:3001/api/products/:path*",
       },
       {
         source: "/permissions/:path*",

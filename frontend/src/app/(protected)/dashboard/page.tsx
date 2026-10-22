@@ -72,8 +72,10 @@ export default function DashboardPage() {
     permissions ?? {
       dashboard: true,
       customers: true,
-      salesPipeline: true,
+      orderPipeline: true,
       documents: true,
+      products: true,
+      productManagement: true,
       reports: true,
       administration:
         user.role === "ADMIN",
@@ -370,10 +372,10 @@ export default function DashboardPage() {
         </Box>
 
         {/* =================================================
-            SALES PIPELINE
+            ORDER PIPELINE
         ================================================== */}
 
-        {dashboardPermissions.salesPipeline && (
+        {dashboardPermissions.orderPipeline && (
           <Card
             sx={{
               mb: 3,
@@ -401,7 +403,7 @@ export default function DashboardPage() {
                       mb: 0.5,
                     }}
                   >
-                    {t("salesPipelineFunnel")}
+                    {t("orderPipelineFunnel")}
                   </Typography>
 
                   <Typography
@@ -409,7 +411,7 @@ export default function DashboardPage() {
                     variant="body2"
                     color="text.secondary"
                   >
-                    {t("salesPipelineSubtitle")}
+                    {t("orderPipelineSubtitle")}
                   </Typography>
                 </Box>
 
@@ -734,26 +736,10 @@ export default function DashboardPage() {
                   </Button>
                 )}
 
-                {dashboardPermissions.documents && (
+                {dashboardPermissions.orderPipeline && (
                   <Button
                     component={Link}
-                    href="/documents"
-                    variant="outlined"
-                    fullWidth
-                    sx={{
-                      justifyContent:
-                        "flex-start",
-                      textTransform: "none",
-                    }}
-                  >
-                    {t("newQuote")}
-                  </Button>
-                )}
-
-                {dashboardPermissions.salesPipeline && (
-                  <Button
-                    component={Link}
-                    href="/sales-pipeline"
+                    href="/order-pipeline"
                     variant="outlined"
                     fullWidth
                     sx={{

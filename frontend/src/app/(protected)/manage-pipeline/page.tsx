@@ -521,8 +521,10 @@ export default function ManagePipelinePage() {
   const _fallbackPermissions: Permissions = permissions ?? {
     dashboard: false,
     customers: false,
-    salesPipeline: false,
+    orderPipeline: false,
     documents: false,
+    products: false,
+    productManagement: false,
     reports: false,
     administration: false,
     permissions: false,

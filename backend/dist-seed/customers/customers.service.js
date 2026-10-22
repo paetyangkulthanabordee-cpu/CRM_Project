@@ -39,9 +39,23 @@ let CustomersService = class CustomersService {
             });
         }
         if (query.search) {
-            builder.andWhere('(customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.phone ILIKE :search)', { search: `%${query.search}%` });
+            builder.andWhere('(customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.phone ILIKE :search OR assigned.name ILIKE :search)', { search: `%${query.search}%` });
         }
-        return builder.getMany();
+        if (query.dateFrom) {
+            builder.andWhere('customer.createdAt >= :dateFrom', {
+                dateFrom: query.dateFrom,
+            });
+        }
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+        const [data, total] = await builder
+            .skip((page - 1) * limit)
+            .take(limit)
+            .getManyAndCount();
+        return { data, total, page, limit };
+    }
+    async countAll() {
+        return this.customersRepository.count();
     }
     async findOne(customerId) {
         const customer = await this.customersRepository.findOne({
@@ -56,14 +70,14 @@ let CustomersService = class CustomersService {
     async firstStageKey() {
         const stages = await this.stagesService.findAll();
         if (stages.length === 0) {
-            throw new NotFoundException('ยังไม่มีคอลัมน์ใน Sales Pipeline กรุณาเพิ่มคอลัมน์ก่อน');
+            throw new NotFoundException('ยังไม่มีคอลัมน์ในท่อออเดอร์ กรุณาเพิ่มคอลัมน์ก่อน');
         }
         return stages[0].stageKey;
     }
     async assertStageExists(stageKey) {
         const exists = await this.stagesService.exists(stageKey);
         if (!exists) {
-            throw new NotFoundException(`ไม่พบคอลัมน์ "${stageKey}" ใน Sales Pipeline`);
+            throw new NotFoundException(`ไม่พบคอลัมน์ "${stageKey}" ในท่อออเดอร์`);
         }
     }
     async recalcPurchaseCount(customerId, manager) {
@@ -74,11 +88,23 @@ let CustomersService = class CustomersService {
            FROM documents d
            WHERE d.customer_id = c.customer_id
              AND d.doc_type = 'receipt'
-             AND d.status = 'completed'
          )
          WHERE c.customer_id = $1
          RETURNING purchase_count`, [customerId]);
         return Number(rows[0]?.purchaseCount ?? 0);
+    }
+    async recalcPurchaseCountBatch(customerIds) {
+        if (customerIds.length === 0) {
+            return;
+        }
+        await this.customersRepository.query(`UPDATE customers c
+       SET purchase_count = (
+         SELECT COUNT(*)::int
+         FROM documents d
+         WHERE d.customer_id = c.customer_id
+           AND d.doc_type = 'receipt'
+       )
+       WHERE c.customer_id = ANY($1::int[])`, [customerIds]);
     }
     async create(dto, assignedId) {
         const status = dto.status ??

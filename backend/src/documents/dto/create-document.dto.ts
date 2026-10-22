@@ -9,7 +9,6 @@ import {
 } from 'class-validator';
 
 import {
-  ALL_DOCUMENT_STATUSES,
   DOC_TYPES,
 } from '../document-types.js';
 
@@ -37,10 +36,6 @@ export class CreateDocumentDto {
   @IsNumber()
   @Min(0)
   amount: number;
-
-  @IsOptional()
-  @IsIn(ALL_DOCUMENT_STATUSES)
-  status?: string;
 
   @IsOptional()
   @IsString()

@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 import { Injectable, UnauthorizedException, } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, TokenExpiredError } from '@nestjs/jwt';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator.js';
 let JwtAuthGuard = class JwtAuthGuard {
     jwtService;
@@ -37,8 +37,11 @@ let JwtAuthGuard = class JwtAuthGuard {
             request.user =
                 await this.jwtService.verifyAsync(token);
         }
-        catch {
-            throw new UnauthorizedException('Token ไม่ถูกต้องหรือหมดอายุ');
+        catch (error) {
+            if (error instanceof TokenExpiredError) {
+                throw new UnauthorizedException('Token หมดอายุ');
+            }
+            throw new UnauthorizedException('Token ไม่ถูกต้อง');
         }
         return true;
     }

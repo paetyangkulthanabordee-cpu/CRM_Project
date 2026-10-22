@@ -7,15 +7,13 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Min, } from 'class-validator';
-import { ALL_DOCUMENT_STATUSES } from '../document-types.js';
+import { IsInt, IsNumber, IsOptional, IsString, Matches, Min, } from 'class-validator';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export class UpdateDocumentDto {
     customerId;
     issueDate;
     dueDate;
     amount;
-    status;
     note;
 }
 __decorate([
@@ -43,11 +41,6 @@ __decorate([
     Min(0),
     __metadata("design:type", Number)
 ], UpdateDocumentDto.prototype, "amount", void 0);
-__decorate([
-    IsOptional(),
-    IsIn(ALL_DOCUMENT_STATUSES),
-    __metadata("design:type", String)
-], UpdateDocumentDto.prototype, "status", void 0);
 __decorate([
     IsOptional(),
     IsString(),

@@ -16,7 +16,7 @@ import { Repository } from 'typeorm';
 import { CustomersService } from '../customers/customers.service.js';
 import { Customer } from '../customers/entities/customer.entity.js';
 import { User } from '../users/entities/user.entity.js';
-import { DEFAULT_STATUS, DOC_PREFIXES, DOCUMENT_STATUSES, REF_TYPE, } from './document-types.js';
+import { DOC_PREFIXES, REF_TYPE, } from './document-types.js';
 import { DocumentRecord } from './entities/document.entity.js';
 import { DocumentSequence } from './entities/document-sequence.entity.js';
 let DocumentsService = class DocumentsService {
@@ -42,9 +42,9 @@ let DocumentsService = class DocumentsService {
                 type: query.type,
             });
         }
-        if (query.status) {
-            builder.andWhere('doc.status = :status', {
-                status: query.status,
+        if (query.dateFrom) {
+            builder.andWhere('doc.issueDate >= :dateFrom', {
+                dateFrom: query.dateFrom,
             });
         }
         if (query.from) {
@@ -65,11 +65,44 @@ let DocumentsService = class DocumentsService {
                 customerId: query.customerId,
             });
         }
-        const { entities, raw } = await builder.getRawAndEntities();
-        return entities.map((doc, index) => Object.assign({}, doc, {
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
+        const { entities, raw } = await builder
+            .skip((page - 1) * limit)
+            .take(limit)
+            .getRawAndEntities();
+        const data = entities.map((doc, index) => Object.assign({}, doc, {
             customerName: raw[index]?.customerName ?? null,
             creatorName: raw[index]?.creatorName ?? null,
         }));
+        const countBuilder = this.documentsRepository
+            .createQueryBuilder('doc')
+            .leftJoin(Customer, 'c', 'c.customerId = doc.customerId')
+            .leftJoin(User, 'u', 'u.userId = doc.createdBy');
+        if (query.type) {
+            countBuilder.andWhere('doc.docType = :type', { type: query.type });
+        }
+        if (query.dateFrom) {
+            countBuilder.andWhere('doc.issueDate >= :dateFrom', {
+                dateFrom: query.dateFrom,
+            });
+        }
+        if (query.from) {
+            countBuilder.andWhere('doc.issueDate >= :from', { from: query.from });
+        }
+        if (query.to) {
+            countBuilder.andWhere('doc.issueDate <= :to', { to: query.to });
+        }
+        if (query.search) {
+            countBuilder.andWhere('(doc.docNo ILIKE :search OR doc.refDocNo ILIKE :search OR c.companyName ILIKE :search)', { search: `%${query.search}%` });
+        }
+        if (query.customerId) {
+            countBuilder.andWhere('doc.customerId = :customerId', {
+                customerId: query.customerId,
+            });
+        }
+        const total = await countBuilder.getCount();
+        return { data, total, page, limit };
     }
     async findOne(docId) {
         const { entities, raw } = await this.documentsRepository
@@ -94,39 +127,37 @@ let DocumentsService = class DocumentsService {
             .createQueryBuilder('doc')
             .select('doc.docType', 'docType')
             .addSelect('COUNT(*)::int', 'count')
-            .addSelect(`COALESCE(SUM(doc.amount) FILTER (WHERE doc.status NOT IN ('cancelled', 'void')), 0)`, 'total')
-            .addSelect(`COALESCE(SUM(doc.amount) FILTER (WHERE doc.status = 'pending'), 0)`, 'pendingAmount')
+            .addSelect('COALESCE(SUM(doc.amount), 0)', 'total')
             .groupBy('doc.docType')
             .getRawMany();
         const result = {
             quotation: {
                 count: 0,
                 total: 0,
-                pendingAmount: 0,
             },
             invoice: {
                 count: 0,
                 total: 0,
-                pendingAmount: 0,
             },
             receipt: {
                 count: 0,
                 total: 0,
-                pendingAmount: 0,
+            },
+            purchase_order: {
+                count: 0,
+                total: 0,
             },
         };
         for (const row of rows) {
             result[row.docType] = {
                 count: Number(row.count),
                 total: Number(row.total),
-                pendingAmount: Number(row.pendingAmount),
             };
         }
         return result;
     }
     async create(dto, userId) {
         const docType = dto.docType;
-        this.assertStatus(docType, dto.status);
         await this.assertCustomer(dto.customerId);
         const ref = await this.resolveRef(docType, dto.refDocId);
         const issueDate = dto.issueDate ??
@@ -142,16 +173,10 @@ let DocumentsService = class DocumentsService {
                 refDocId: ref?.docId ?? null,
                 refDocNo: ref?.docNo ?? null,
                 amount: dto.amount,
-                status: dto.status ?? DEFAULT_STATUS[docType],
                 note: dto.note ?? null,
                 createdBy: userId,
             });
             const created = await manager.save(doc);
-            if (docType === 'receipt' &&
-                ref &&
-                ref.docType === 'invoice') {
-                await manager.update(DocumentRecord, ref.docId, { status: 'paid' });
-            }
             await this.customersService.recalcPurchaseCount(dto.customerId, manager);
             return created;
         });
@@ -162,7 +187,6 @@ let DocumentsService = class DocumentsService {
         if (!doc) {
             throw new NotFoundException('ไม่พบเอกสารนี้');
         }
-        this.assertStatus(doc.docType, dto.status);
         if (dto.customerId !== undefined) {
             await this.assertCustomer(dto.customerId);
         }
@@ -177,8 +201,8 @@ let DocumentsService = class DocumentsService {
         if (doc.customerId !== null) {
             affectedCustomerIds.add(doc.customerId);
         }
-        for (const customerId of affectedCustomerIds) {
-            await this.customersService.recalcPurchaseCount(customerId);
+        if (affectedCustomerIds.size > 0) {
+            await this.customersService.recalcPurchaseCountBatch(Array.from(affectedCustomerIds));
         }
         return this.findOne(saved.docId);
     }
@@ -193,12 +217,6 @@ let DocumentsService = class DocumentsService {
             await this.customersService.recalcPurchaseCount(customerId);
         }
         return { docId, deleted: true };
-    }
-    assertStatus(docType, status) {
-        if (status &&
-            !DOCUMENT_STATUSES[docType].includes(status)) {
-            throw new BadRequestException('สถานะไม่ถูกต้องสำหรับเอกสารชนิดนี้');
-        }
     }
     async assertCustomer(customerId) {
         const exists = await this.customersRepository.exists({
@@ -224,10 +242,6 @@ let DocumentsService = class DocumentsService {
         }
         if (ref.docType !== expected) {
             throw new BadRequestException('เอกสารอ้างอิงชนิดไม่ถูกต้อง');
-        }
-        if (ref.status === 'cancelled' ||
-            ref.status === 'void') {
-            throw new BadRequestException('เอกสารอ้างอิงถูกยกเลิกแล้ว');
         }
         return ref;
     }

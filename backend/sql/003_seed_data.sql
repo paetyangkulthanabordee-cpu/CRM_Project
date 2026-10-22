@@ -45,7 +45,6 @@ CREATE TABLE IF NOT EXISTS documents (
     ref_doc_id INT,
     ref_doc_no VARCHAR(100),
     amount DECIMAL(15,2) DEFAULT 0,
-    status VARCHAR(50) DEFAULT 'draft',
     note TEXT,
     created_by INT REFERENCES users(user_id),
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -96,7 +95,7 @@ INSERT INTO customers (company_name, email, phone, status, assigned_id) VALUES
 INSERT INTO role_permissions (role, permission_key, granted) VALUES
 ('ADMIN', 'dashboard', TRUE),
 ('ADMIN', 'customers', TRUE),
-('ADMIN', 'salesPipeline', TRUE),
+('ADMIN', 'orderPipeline', TRUE),
 ('ADMIN', 'documents', TRUE),
 ('ADMIN', 'reports', TRUE),
 ('ADMIN', 'administration', TRUE),
@@ -104,11 +103,11 @@ INSERT INTO role_permissions (role, permission_key, granted) VALUES
 ('ADMIN', 'auditLogs', TRUE),
 ('MANAGER', 'dashboard', TRUE),
 ('MANAGER', 'customers', TRUE),
-('MANAGER', 'salesPipeline', TRUE),
+('MANAGER', 'orderPipeline', TRUE),
 ('MANAGER', 'documents', TRUE),
 ('MANAGER', 'reports', TRUE),
 ('SALES', 'dashboard', TRUE),
 ('SALES', 'customers', TRUE),
-('SALES', 'salesPipeline', TRUE),
+('SALES', 'orderPipeline', TRUE),
 ('SALES', 'documents', TRUE)
 ON CONFLICT (role, permission_key) DO NOTHING;

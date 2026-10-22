@@ -31,13 +31,14 @@ let PermissionsGuard = class PermissionsGuard {
             .switchToHttp()
             .getRequest();
         const role = request.user?.role;
-        if (!role) {
+        if (!role || !Object.values(UserRole).includes(role)) {
             throw new ForbiddenException('ไม่สามารถตรวจสอบสิทธิ์การใช้งานได้');
         }
-        if (role === UserRole.ADMIN) {
+        const validRole = role;
+        if (validRole === UserRole.ADMIN) {
             return true;
         }
-        const permissions = await this.permissionsService.getForRole(role);
+        const permissions = await this.permissionsService.getForRole(validRole);
         const allowed = required.every((key) => permissions[key] === true);
         if (!allowed) {
             throw new ForbiddenException('บัญชีของคุณไม่มีสิทธิ์เข้าถึงส่วนนี้ กรุณาติดต่อผู้ดูแลระบบ (Admin)');

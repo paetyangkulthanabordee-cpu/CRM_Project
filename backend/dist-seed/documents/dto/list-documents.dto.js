@@ -12,22 +12,19 @@ import { DOC_TYPES } from '../document-types.js';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export class ListDocumentsDto {
     type;
-    status;
     search;
     customerId;
+    dateFrom;
     from;
     to;
+    page;
+    limit;
 }
 __decorate([
     IsOptional(),
     IsIn(DOC_TYPES),
     __metadata("design:type", String)
 ], ListDocumentsDto.prototype, "type", void 0);
-__decorate([
-    IsOptional(),
-    IsString(),
-    __metadata("design:type", String)
-], ListDocumentsDto.prototype, "status", void 0);
 __decorate([
     IsOptional(),
     IsString(),
@@ -44,6 +41,13 @@ __decorate([
         message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
     }),
     __metadata("design:type", String)
+], ListDocumentsDto.prototype, "dateFrom", void 0);
+__decorate([
+    IsOptional(),
+    Matches(DATE_PATTERN, {
+        message: 'รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)',
+    }),
+    __metadata("design:type", String)
 ], ListDocumentsDto.prototype, "from", void 0);
 __decorate([
     IsOptional(),
@@ -52,4 +56,14 @@ __decorate([
     }),
     __metadata("design:type", String)
 ], ListDocumentsDto.prototype, "to", void 0);
+__decorate([
+    IsOptional(),
+    IsInt(),
+    __metadata("design:type", Number)
+], ListDocumentsDto.prototype, "page", void 0);
+__decorate([
+    IsOptional(),
+    IsInt(),
+    __metadata("design:type", Number)
+], ListDocumentsDto.prototype, "limit", void 0);
 //# sourceMappingURL=list-documents.dto.js.map

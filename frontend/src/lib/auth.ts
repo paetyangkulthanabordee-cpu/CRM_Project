@@ -10,8 +10,10 @@ export interface User {
 export interface Permissions {
   dashboard: boolean;
   customers: boolean;
-  salesPipeline: boolean;
+  orderPipeline: boolean;
   documents: boolean;
+  products: boolean;
+  productManagement: boolean;
   reports: boolean;
   administration: boolean;
   permissions: boolean;

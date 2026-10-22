@@ -9,11 +9,18 @@ export declare class CustomersService {
     private readonly customersRepository;
     private readonly stagesService;
     constructor(customersRepository: Repository<Customer>, stagesService: PipelineStagesService);
-    findAll(query: ListCustomersDto): Promise<Customer[]>;
+    findAll(query: ListCustomersDto): Promise<{
+        data: Customer[];
+        total: number;
+        page: number;
+        limit: number;
+    }>;
+    countAll(): Promise<number>;
     findOne(customerId: number): Promise<Customer>;
     private firstStageKey;
     private assertStageExists;
     recalcPurchaseCount(customerId: number, manager?: EntityManager): Promise<number>;
+    recalcPurchaseCountBatch(customerIds: number[]): Promise<void>;
     create(dto: CreateCustomerDto, assignedId?: number): Promise<Customer>;
     update(customerId: number, dto: UpdateCustomerDto): Promise<Customer>;
     deactivate(customerId: number): Promise<{

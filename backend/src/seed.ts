@@ -68,9 +68,25 @@ async function seed() {
     });
   }
 
-  const existingCustomers = await customersService.findAll({ onlyInactive: true });
+  /*
+   * ผู้รับผิดชอบของลูกค้าที่ seed
+   * ลูกค้าที่สร้างใหม่ต้องผูกผู้รับผิดชอบเสมอ
+   * ไม่เช่นนั้นจะกลายเป็น Unassigned (assigned_id = NULL)
+   */
+  const users = await usersService.findAll();
+  const owner =
+    users.find((user) => user.role === UserRole.ADMIN) ??
+    users[0];
 
-  if (existingCustomers.data.length === 0) {
+  /*
+   * นับลูกค้าทั้งหมด (ทั้งที่ใช้งานอยู่และที่ปิดใช้งาน)
+   * ถ้าใช้ findAll({ onlyInactive: true }) จะนับได้เฉพาะลูกค้าที่ปิดใช้งาน
+   * แล้ว seed ลูกค้าซ้ำทั้งที่ยังมีลูกค้าอยู่ในระบบ
+   */
+  const existingCustomerCount =
+    await customersService.countAll();
+
+  if (existingCustomerCount === 0) {
     const stageKeys = stages.map((s) => s.stageKey);
     const customers = [
       { companyName: 'บริษัท เทคโนโลยี จำกัด', email: 'contact@tech.co.th', phone: '02-123-4567', status: stageKeys[0] },
@@ -88,7 +104,10 @@ async function seed() {
     ];
 
     for (const customer of customers) {
-      await customersService.create(customer);
+      await customersService.create(
+        customer,
+        owner?.userId,
+      );
     }
   }
 

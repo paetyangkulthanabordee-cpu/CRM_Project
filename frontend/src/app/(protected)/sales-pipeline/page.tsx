@@ -1,10 +1,8 @@
 "use client";
 
 import {
-  memo,
   useCallback,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
@@ -36,34 +34,12 @@ import MailOutlineIcon from "@mui/icons-material/MailOutlined";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import PhoneIphoneIcon from "@mui/icons-material/PhoneIphone";
 
+import AddIcon from "@mui/icons-material/Add";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 import TodayIcon from "@mui/icons-material/Today";
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  closestCorners,
-  pointerWithin,
-  rectIntersection,
-  useDroppable,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
 
-import type {
-  Active,
-  CollisionDetection,
-  Over,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-
-import { useVirtualizer } from "@tanstack/react-virtual";
-
+import AddCardDialog from "@/components/AddCardDialog";
+import CustomersKanbanBoard from "@/components/CustomersKanbanBoard";
 import CustomerDetailDialog, {
   formatDate,
   initials,
@@ -339,269 +315,6 @@ function PipelineCard({
   );
 }
 
-function SortableCard({
-  customer,
-  onOpen,
-}: {
-  customer: Customer;
-  onOpen: (customer: Customer) => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({
-    id: customer.customerId,
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(
-          transform,
-        ),
-        // ไม่ต้องมี transition ตอน-active drag เพราะ dnd-kit คุม transform เอง
-        transition: isDragging
-          ? undefined
-          : transition ||
-            "transform 150ms cubic-bezier(0.2, 1, 0.3, 1), opacity 150ms ease",
-        willChange: "transform",
-      }}
-      {...attributes}
-      {...listeners}
-    >
-      <PipelineCard
-        customer={customer}
-        ghost={isDragging}
-        onOpen={onOpen}
-      />
-    </div>
-  );
-}
-
-const MemoSortableCard = memo(SortableCard);
-
-/*
- * collision detection สำหรับ Kanban:
- * - ถ้า cursor อยู่ใน target จริง ให้ใช้อันนั้นก่อน (ลื่นสุด ตามตำแหน่งเมาส์)
- * - ถ้าไม่มี ค่อย fallback เป็นระยะ/recently intersection
- * - สุดท้าย closestCorners กันพ零部件ตอน header/empty state
- */
-const kanbanCollision: CollisionDetection = (
-  args,
-) => {
-  const pointerCollisions = pointerWithin(args);
-
-  if (pointerCollisions.length > 0) {
-    return pointerCollisions;
-  }
-
-  const rectCollisions = rectIntersection(args);
-
-  if (rectCollisions.length > 0) {
-    return rectCollisions;
-  }
-
-  return closestCorners(args);
-};
-
-const CARD_HEIGHT = 148;
-const CARD_GAP = 1.25;
-
-function Column({
-  stage,
-  customers,
-  onOpen,
-}: {
-  stage: PipelineStage;
-  customers: Customer[];
-  onOpen: (customer: Customer) => void;
-}) {
-  const t = useTranslations("salesPipeline");
-
-  const { setNodeRef, isOver } = useDroppable({
-    id: stage.stageKey,
-  });
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual ไม่สามารถ memoize ได้ แต่ Column ไม่ถูกส่งต่อไปยัง component ที่ memoize
-  const virtualizer = useVirtualizer({
-    count: customers.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => CARD_HEIGHT + CARD_GAP,
-    overscan: 5,
-  });
-
-  return (
-    <Box
-      data-testid="pipeline-column"
-      data-status={stage.stageKey}
-      sx={{
-        width: 280,
-        flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        maxHeight: "calc(100vh - 140px)",
-        bgcolor: isOver
-          ? "#eff6ff"
-          : "#ffffff",
-        border: "1px solid #e7ebf2",
-        borderRadius: "12px",
-        boxShadow: "0 1px 3px rgba(15,23,42,0.04)",
-        transition: "background 150ms ease",
-      }}
-    >
-      <Box
-        sx={{
-          mb: 1,
-          px: 1.5,
-          py: 1.25,
-          display: "flex",
-          alignItems: "center",
-          gap: 1,
-        }}
-      >
-        <Box
-          sx={{
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            bgcolor: stage.color,
-            flexShrink: 0,
-          }}
-        />
-
-        <Typography
-          sx={{
-            fontWeight: 800,
-            fontSize: 13,
-            color: "#172033",
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          {stage.label}
-        </Typography>
-
-        <Box
-          sx={{
-            minWidth: 22,
-            height: 20,
-            px: 0.75,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            borderRadius: 6,
-            bgcolor: "#f1f5f9",
-            fontSize: 11,
-            fontWeight: 800,
-            color: "#475569",
-          }}
-        >
-          {customers.length}
-        </Box>
-      </Box>
-
-      <Box
-        ref={(node: HTMLDivElement | null) => {
-          setNodeRef(node);
-          scrollRef.current = node;
-        }}
-        sx={{
-          flex: 1,
-          overflowY: "auto",
-          scrollbarWidth: "none",
-          msOverflowStyle: "none",
-          "&::-webkit-scrollbar": {
-            display: "none",
-            width: 0,
-            height: 0,
-          },
-          display: "flex",
-          flexDirection: "column",
-          gap: 1.25,
-          pb: 1,
-          pr: 0.5,
-        }}
-      >
-        <SortableContext
-          items={customers.map(
-            (customer) => customer.customerId,
-          )}
-          strategy={verticalListSortingStrategy}
-        >
-          <Box
-            sx={{
-              height: virtualizer.getTotalSize(),
-              width: "100%",
-              position: "relative",
-            }}
-          >
-            {virtualizer
-              .getVirtualItems()
-              .map((virtualItem) => {
-                const customer =
-                  customers[virtualItem.index];
-
-                return (
-                  <Box
-                    key={customer.customerId}
-                    data-index={virtualItem.index}
-                    ref={virtualizer.measureElement}
-                    sx={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      /*
-                       * ต้องเป็น paddingBottom ไม่ใช่ marginBottom
-                       * เพราะ measureElement อ่าน border-box (รวม padding ไม่รวม margin)
-                       * ใช้ margin แล้ว gap จะไม่นับเข้า item size การ์ดตัวถัดมาจะมาซ้อนทับ
-                       */
-                      paddingBottom: CARD_GAP,
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
-                  >
-                    <MemoSortableCard
-                      customer={customer}
-                      onOpen={onOpen}
-                    />
-                  </Box>
-                );
-              })}
-          </Box>
-        </SortableContext>
-
-        {customers.length === 0 && (
-          <Box
-            sx={{
-              py: 4,
-              px: 2,
-              textAlign: "center",
-              border: "1px dashed #d7dee8",
-              borderRadius: "12px",
-            }}
-          >
-            <Typography
-              variant="caption"
-              sx={{ color: "#94a3b8" }}
-            >
-              {t("noCustomers")}
-            </Typography>
-          </Box>
-        )}
-      </Box>
-    </Box>
-  );
-}
-
-const MemoColumn = memo(Column);
-
 /* =====================================================
    PAGE
    ====================================================== */
@@ -675,25 +388,8 @@ export default function SalesPipelinePage() {
 
   const [activeId, setActiveId] =
     useState<Customer | null>(null);
-  const [dragging, setDragging] =
-    useState<Customer | null>(null);
   const [notice, setNotice] = useState("");
-
-  /*
-   * เก็บสถานะตั้งต้นของ card ที่ลากอยู่ ตอน drag ระหว่างคอลัมน์
-   * ถ้า drop ไม่สำเร็จหรือ cancel ต้องเอากลับเป็นค่าเดิม
-   */
-  const dragOriginStatus = useRef<string | null>(
-    null,
-  );
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    }),
-  );
+  const [addCardOpen, setAddCardOpen] = useState(false);
 
   /*
    * รายการ Sales ที่มีอยู่จริงในบอร์ด
@@ -805,7 +501,11 @@ export default function SalesPipelinePage() {
     );
   }
 
-  const byColumn = useMemo(() => {
+  /*
+   * ลูกค้าที่ผ่านตัวกรองแล้ว
+   * (การจัดกลุ่มเป็นคอลัมน์ทำในบอร์ดให้เอง)
+   */
+  const boardCustomers = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     const from =
@@ -817,7 +517,7 @@ export default function SalesPipelinePage() {
         ? null
         : endOfDay(activeRange.to);
 
-    const matched = customers.filter(
+    return customers.filter(
       (customer) => {
         if (
           query.length > 0 &&
@@ -870,23 +570,8 @@ export default function SalesPipelinePage() {
         return true;
       },
     );
-
-    const grouped: Record<
-      string,
-      Customer[]
-    > = {};
-
-    for (const stage of stages) {
-      grouped[stage.stageKey] = matched.filter(
-        (customer) =>
-          customer.status === stage.stageKey,
-      );
-    }
-
-    return grouped;
   }, [
     customers,
-    stages,
     search,
     salesFilter,
     statusFilter,
@@ -894,38 +579,14 @@ export default function SalesPipelinePage() {
   ]);
 
   /*
-   * อัปเดต status ใน SWR cache ทันทีโดยไม่ดึงข้อมูลใหม่
-   * ใช้ระหว่างลาก (drag-over preview) และตอนปล่อย (drop) ให้รู้สึกไม่มีกระตุก
-   */
-  function patchCustomerStatus(
-    customerId: number,
-    status: string,
-  ) {
-    void reloadCustomers(
-      (current) =>
-        current
-          ? {
-              ...current,
-              data: current.data.map((item) =>
-                item.customerId === customerId
-                  ? { ...item, status }
-                  : item,
-              ),
-            }
-          : current,
-      { revalidate: false },
-    );
-  }
-
-  /*
    * เปลี่ยนสถานะผ่าน API แล้ว refetch ข้อมูลจริงกลับมา
-   * ถ้าล้มเหลว refetch ทันทีเพื่อยกเลิก optimistic update ที่ค้างอยู่
+   * ต้องเสร็จก่อนจบ เพื่อให้บอร์ดอัปเดตตามข้อมูลล่าสุด
    */
   const persistStatus = useCallback(
     async (
       customerId: number,
       status: string,
-    ) => {
+    ): Promise<void> => {
       try {
         await api.patch(
           `/api/customers/${customerId}`,
@@ -950,53 +611,6 @@ export default function SalesPipelinePage() {
     [t, reloadCustomers],
   );
 
-  /*
-   * ลากไปวางบน card คนอื่นได้ด้วย ต้องหาว่า card นั้นอยู่คอลัมน์ไหน
-   * เพราะการปล่อยบนตัวการ์ดถือว่าอยากให้เข้าแถวเดียวกันกับคนนั้น
-   */
-  function resolveTargetStatus(
-    overId: number | string,
-  ): string | null {
-    const asStage = String(overId);
-
-    if (
-      stages.some(
-        (stage) => stage.stageKey === asStage,
-      )
-    ) {
-      return asStage;
-    }
-
-    const numeric = Number(overId);
-
-    if (Number.isNaN(numeric)) {
-      return null;
-    }
-
-    const overCustomer = customers.find(
-      (item) => item.customerId === numeric,
-    );
-
-    return overCustomer?.status ?? null;
-  }
-
-  function handleDragStart(
-    event: {
-      active: Active;
-    },
-  ) {
-    const id = Number(event.active.id);
-
-    const customer = customers.find(
-      (item) => item.customerId === id,
-    );
-
-    dragOriginStatus.current =
-      customer?.status ?? null;
-
-    setDragging(customer ?? null);
-  }
-
   const handleOpenCustomer = useCallback(
     (customer: Customer) => {
       setActiveId(customer);
@@ -1004,117 +618,23 @@ export default function SalesPipelinePage() {
     [],
   );
 
-  /*
-   * สำคัญที่สุดของความ "ลื่น": ขณะลากผ่านคอลัมน์อื่น
-   * ให้ย้าย card ไปอยู่ใน target column ทันที (optimistic)
-   * ตอนปล่อย card จึงอยู่ที่ถูกที่แล้ว ไม่ต้องโดนดึงข้อมูลใหม่แล้ววาร์ป
-   */
-  function handleDragOver(
-    event: {
-      active: Active;
-      over: Over | null;
-    },
-  ) {
-    const activeId = Number(event.active.id);
-
-    if (!event.over || Number.isNaN(activeId)) {
-      return;
-    }
-
-    const targetStatus = resolveTargetStatus(
-      event.over.id,
-    );
-
-    if (!targetStatus) {
-      return;
-    }
-
-    const activeCustomer = customers.find(
-      (item) => item.customerId === activeId,
-    );
-
-    if (
-      !activeCustomer ||
-      activeCustomer.status === targetStatus
-    ) {
-      return;
-    }
-
-    patchCustomerStatus(
-      activeCustomer.customerId,
-      targetStatus,
-    );
-
-    setDragging((prev) =>
-      prev
-        ? { ...prev, status: targetStatus }
-        : prev,
-    );
-  }
-
-  function handleDragEnd(
-    event: {
-      active: Active;
-      over: Over | null;
-    },
-  ) {
-    const activeId = Number(event.active.id);
-
-    setDragging(null);
-
-    const originStatus = dragOriginStatus.current;
-
-    dragOriginStatus.current = null;
-
-    if (!event.over || Number.isNaN(activeId)) {
-      // ปล่อยนอกพื้นที่ที่ยอมรับได้ -> เอากลับคอลัมน์เดิมทันที
-      if (originStatus !== null) {
-        patchCustomerStatus(
-          activeId,
-          originStatus,
-        );
-      }
-
-      return;
-    }
-
-    const targetStatus = resolveTargetStatus(
-      event.over.id,
-    );
-
-    if (!targetStatus) {
-      return;
-    }
-
-    /*
-     * เทียบกับสถานะต้นทาง ไม่ใช่สถานะปัจจุบัน
-     * เพราะอาจถูกล่วงระหว่าง drag-over แล้ว ถ้าเทียบกับสถานะปัจจุบันจะไม่ยิง API
-     */
-    if (!originStatus || originStatus === targetStatus) {
-      return;
-    }
-
-    patchCustomerStatus(activeId, targetStatus);
-
-    void persistStatus(activeId, targetStatus);
-  }
-
-  function handleDragCancel() {
-    const activeId = dragging?.customerId;
-    const originStatus = dragOriginStatus.current;
-
-    setDragging(null);
-
-    dragOriginStatus.current = null;
-
-    if (!activeId || originStatus === null) {
-      return;
-    }
-
-    patchCustomerStatus(activeId, originStatus);
-  }
-
-
+  const renderCard = useCallback(
+    (
+      customer: Customer,
+      state: {
+        ghost: boolean;
+        dragging: boolean;
+      },
+    ) => (
+      <PipelineCard
+        customer={customer}
+        ghost={state.ghost}
+        dragging={state.dragging}
+        onOpen={handleOpenCustomer}
+      />
+    ),
+    [handleOpenCustomer],
+  );
 
   if (!user) {
     return (
@@ -1137,18 +657,17 @@ export default function SalesPipelinePage() {
       dashboard: true,
       customers: true,
       salesPipeline: true,
+      orderPipeline: true,
       documents: true,
+      products: true,
+      productManagement: true,
       reports: true,
       administration: user?.role === "ADMIN",
       permissions: user?.role === "ADMIN",
       auditLogs: user?.role === "ADMIN",
     };
 
-  const totalVisible = stages.reduce(
-    (sum, stage) =>
-      sum + (byColumn[stage.stageKey]?.length ?? 0),
-    0,
-  );
+  const totalVisible = boardCustomers.length;
 
   return (
     <Box
@@ -1208,22 +727,25 @@ export default function SalesPipelinePage() {
               {customers.length} {t("entries")}
             </Typography>
 
-            {hasFilter && (
-              <Button
-                size="small"
-                onClick={resetFilters}
-                sx={{
-                  textTransform: "none",
-                  fontWeight: 700,
-                  fontSize: 13,
-                  color: "#64748b",
-                  minWidth: 0,
-                  px: 1,
-                }}
-              >
-                {t("clearFilters")}
-              </Button>
-            )}
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setAddCardOpen(true)}
+              sx={{
+                textTransform: "none",
+                fontWeight: 700,
+                fontSize: 13,
+                borderRadius: "8px",
+                px: 2,
+                bgcolor: "#2563eb",
+                "&:hover": {
+                  bgcolor: "#1d4ed8",
+                },
+                flexShrink: 0,
+              }}
+            >
+              {t("addNewCard")}
+            </Button>
           </Stack>
         </Box>
 
@@ -1245,7 +767,8 @@ export default function SalesPipelinePage() {
             }
             placeholder={t("keywordPlaceholder")}
             sx={{
-              flex: { xs: "1 1 100%", sm: "0 1 240px" },
+              flex: { xs: "1 1 100%", sm: "1 1 auto" },
+              minWidth: { sm: "280px" },
               "& .MuiOutlinedInput-root": {
                 borderRadius: "8px",
                 bgcolor: "#ffffff",
@@ -1296,6 +819,23 @@ export default function SalesPipelinePage() {
               </Box>
             )}
           </Button>
+
+          {hasFilter && (
+            <Button
+              size="small"
+              onClick={resetFilters}
+              sx={{
+                textTransform: "none",
+                fontWeight: 700,
+                fontSize: 13,
+                color: "#64748b",
+                minWidth: 0,
+                px: 1,
+              }}
+            >
+              {t("clearFilters")}
+            </Button>
+          )}
         </Stack>
 
         {/* ---- filter panel (Trello style) ---- */}
@@ -1823,63 +1363,15 @@ export default function SalesPipelinePage() {
             </Typography>
           </Card>
         ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={kanbanCollision}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={handleDragEnd}
-            onDragCancel={handleDragCancel}
-          >
-            <Box
-              sx={{
-                display: "flex",
-                gap: 2,
-                overflowX: "auto",
-                pb: 2,
-                alignItems: "flex-start",
-                scrollbarWidth: "none",
-                msOverflowStyle: "none",
-                "&::-webkit-scrollbar": {
-                  display: "none",
-                  width: 0,
-                  height: 0,
-                },
-              }}
-            >
-              {stages.map((stage) => (
-                <MemoColumn
-                  key={stage.stageId}
-                  stage={stage}
-                  customers={
-                    byColumn[stage.stageKey] ?? []
-                  }
-                  onOpen={handleOpenCustomer}
-                />
-              ))}
-            </Box>
-
-            <DragOverlay dropAnimation={{ duration: 200, easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)" }}>
-              {dragging ? (
-                <Box
-                  sx={{
-                    width: 280,
-                    transform: "rotate(3deg)",
-                    cursor: "grabbing",
-                    "& > *": {
-                      pointerEvents: "none",
-                    },
-                  }}
-                >
-                  <PipelineCard
-                    customer={dragging}
-                    dragging
-                    onOpen={() => undefined}
-                  />
-                </Box>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
+          <CustomersKanbanBoard
+            customers={boardCustomers}
+            stages={stages}
+            onStageChange={persistStatus}
+            renderCard={renderCard}
+            emptyColumnLabel={t("noCustomers")}
+            cardHeight={148}
+            columnWidth={280}
+          />
         )}
       </Box>
 
@@ -1891,6 +1383,19 @@ export default function SalesPipelinePage() {
           onMove={persistStatus}
         />
       )}
+
+      <AddCardDialog
+        open={addCardOpen}
+        customers={customers}
+        stages={stages}
+        onClose={() => setAddCardOpen(false)}
+        onSave={(data) => {
+          // Mock-up: ยังไม่เรียก API จริง
+          console.log("Add card:", data);
+          setNotice(t("cardAdded"));
+          setAddCardOpen(false);
+        }}
+      />
 
       <Snackbar
         open={Boolean(notice)}

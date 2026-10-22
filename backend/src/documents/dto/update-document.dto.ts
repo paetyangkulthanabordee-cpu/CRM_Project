@@ -1,5 +1,4 @@
 import {
-  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -7,8 +6,6 @@ import {
   Matches,
   Min,
 } from 'class-validator';
-
-import { ALL_DOCUMENT_STATUSES } from '../document-types.js';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -33,10 +30,6 @@ export class UpdateDocumentDto {
   @IsNumber()
   @Min(0)
   amount?: number;
-
-  @IsOptional()
-  @IsIn(ALL_DOCUMENT_STATUSES)
-  status?: string;
 
   @IsOptional()
   @IsString()

@@ -149,22 +149,11 @@ export interface DashboardKpis {
    DOCUMENTS (Quotation / Invoice / Receipt)
 ===================================================== */
 
-export const DOC_TYPES = [
-  "quotation",
-  "invoice",
-  "receipt",
-] as const;
-
-export type DocType = (typeof DOC_TYPES)[number];
-
-export const DOC_TYPE_LABELS: Record<
-  DocType,
-  string
-> = {
-  quotation: "Quotation",
-  invoice: "Invoice",
-  receipt: "Receipt",
-};
+export type DocType =
+  | "quotation"
+  | "invoice"
+  | "receipt"
+  | "purchase_order";
 
 export const DOC_TYPE_LABELS_TH: Record<
   DocType,
@@ -173,57 +162,7 @@ export const DOC_TYPE_LABELS_TH: Record<
   quotation: "ใบเสนอราคา",
   invoice: "ใบแจ้งหนี้",
   receipt: "ใบเสร็จรับเงิน",
-};
-
-export const DOC_PREFIXES: Record<DocType, string> =
-  {
-    quotation: "QT",
-    invoice: "IV",
-    receipt: "RC",
-  };
-
-export const DOCUMENT_STATUSES: Record<
-  DocType,
-  readonly string[]
-> = {
-  quotation: ["draft", "approved", "cancelled"],
-  invoice: ["pending", "paid", "cancelled"],
-  receipt: ["completed", "void"],
-};
-
-export const DOC_STATUS_LABELS: Record<
-  string,
-  string
-> = {
-  draft: "แบบร่าง",
-  approved: "อนุมัติแล้ว",
-  cancelled: "ยกเลิก",
-  pending: "รอชำระ",
-  paid: "ชำระแล้ว",
-  completed: "สำเร็จ",
-  void: "ยกเลิก",
-};
-
-export const DOC_STATUS_STYLES: Record<
-  string,
-  StatusChipStyle
-> = {
-  draft: { bg: "#f1f5f9", fg: "#475569" },
-  approved: { bg: "#e6f8ec", fg: "#15803d" },
-  cancelled: { bg: "#fdecec", fg: "#b91c1c" },
-  pending: { bg: "#fff4e8", fg: "#c2410c" },
-  paid: { bg: "#e6f8ec", fg: "#15803d" },
-  completed: { bg: "#e8f1ff", fg: "#1d4ed8" },
-  void: { bg: "#fdecec", fg: "#b91c1c" },
-};
-
-export const REF_TYPE: Record<
-  DocType,
-  DocType | null
-> = {
-  quotation: null,
-  invoice: "quotation",
-  receipt: "invoice",
+  purchase_order: "ใบสั่งซื้อ",
 };
 
 export interface DocumentItem {
@@ -236,7 +175,6 @@ export interface DocumentItem {
   refDocId: number | null;
   refDocNo: string | null;
   amount: number;
-  status: string;
   note: string | null;
   createdBy: number | null;
   createdAt: string;
@@ -244,17 +182,6 @@ export interface DocumentItem {
   customerName: string | null;
   creatorName: string | null;
 }
-
-export interface DocumentStatsEntry {
-  count: number;
-  total: number;
-  pendingAmount: number;
-}
-
-export type DocumentStats = Record<
-  DocType,
-  DocumentStatsEntry
->;
 
 export interface DashboardStage {
   stage: string;
@@ -270,4 +197,46 @@ export interface DashboardData {
   }[];
   stages: DashboardStage[];
   recentCustomers: Customer[];
+}
+
+/* =====================================================
+   PRODUCTS (สินค้า)
+===================================================== */
+
+export interface ProductGroup {
+  id: number;
+  name: string;
+  description: string | null;
+  productCount?: number;
+}
+
+export interface ProductUnit {
+  id: number;
+  name: string;
+  productCount?: number;
+}
+
+export interface Product {
+  id: number;
+  name: string;
+  skuCode: string | null;
+  productGroupId: number;
+  description: string | null;
+  price: number;
+  productUnitId: number;
+  productGroup?: ProductGroup | null;
+  productUnit?: ProductUnit | null;
+}
+
+export interface ProductStats {
+  totalProducts: number;
+  totalValue: number;
+  groupCount: number;
+  unitCount: number;
+}
+
+export interface ProductListItem
+  extends Product {
+  productGroupName: string;
+  productUnitName: string;
 }

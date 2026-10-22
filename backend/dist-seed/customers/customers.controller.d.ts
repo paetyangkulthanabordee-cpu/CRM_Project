@@ -6,7 +6,12 @@ import { UpdateCustomerDto } from './dto/update-customer.dto.js';
 export declare class CustomersController {
     private readonly customersService;
     constructor(customersService: CustomersService);
-    findAll(query: ListCustomersDto): Promise<import("./entities/customer.entity.js").Customer[]>;
+    findAll(query: ListCustomersDto): Promise<{
+        data: import("./entities/customer.entity.js").Customer[];
+        total: number;
+        page: number;
+        limit: number;
+    }>;
     findOne(id: number): Promise<import("./entities/customer.entity.js").Customer>;
     create(dto: CreateCustomerDto, user: AuthUser): Promise<import("./entities/customer.entity.js").Customer>;
     update(id: number, dto: UpdateCustomerDto): Promise<import("./entities/customer.entity.js").Customer>;

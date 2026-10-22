@@ -3,6 +3,5 @@ export declare class UpdateDocumentDto {
     issueDate?: string;
     dueDate?: string;
     amount?: number;
-    status?: string;
     note?: string;
 }

@@ -4,7 +4,10 @@ export const PERMISSION_KEYS = [
   'dashboard',
   'customers',
   'salesPipeline',
+  'orderPipeline',
   'documents',
+  'products',
+  'productManagement',
   'reports',
   'administration',
 ] as const;
@@ -15,7 +18,10 @@ export interface RolePermissionSet {
   dashboard: boolean;
   customers: boolean;
   salesPipeline: boolean;
+  orderPipeline: boolean;
   documents: boolean;
+  products: boolean;
+  productManagement: boolean;
   reports: boolean;
   administration: boolean;
   permissions: boolean;
@@ -31,7 +37,10 @@ export const ADMIN_PERMISSIONS: RolePermissionSet = {
   dashboard: true,
   customers: true,
   salesPipeline: true,
+  orderPipeline: true,
   documents: true,
+  products: true,
+  productManagement: true,
   reports: true,
   administration: true,
   permissions: true,
@@ -50,7 +59,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     dashboard: true,
     customers: true,
     salesPipeline: true,
+    orderPipeline: true,
     documents: true,
+    products: true,
+    productManagement: true,
     reports: true,
     administration: false,
     permissions: false,
@@ -60,7 +72,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<
     dashboard: true,
     customers: true,
     salesPipeline: true,
+    orderPipeline: true,
     documents: true,
+    products: true,
+    productManagement: false,
     reports: false,
     administration: false,
     permissions: false,
@@ -77,7 +92,11 @@ export function toPermissionSet(
     dashboard: granted.dashboard === true,
     customers: granted.customers === true,
     salesPipeline: granted.salesPipeline === true,
+    orderPipeline: granted.orderPipeline === true,
     documents: granted.documents === true,
+    products: granted.products === true,
+    productManagement:
+      granted.productManagement === true,
     reports: granted.reports === true,
     administration,
     permissions: administration,

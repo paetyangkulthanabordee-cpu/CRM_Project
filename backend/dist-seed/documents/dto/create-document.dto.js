@@ -8,7 +8,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 import { IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Min, } from 'class-validator';
-import { ALL_DOCUMENT_STATUSES, DOC_TYPES, } from '../document-types.js';
+import { DOC_TYPES, } from '../document-types.js';
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export class CreateDocumentDto {
     docType;
@@ -16,7 +16,6 @@ export class CreateDocumentDto {
     issueDate;
     dueDate;
     amount;
-    status;
     note;
     refDocId;
 }
@@ -47,11 +46,6 @@ __decorate([
     Min(0),
     __metadata("design:type", Number)
 ], CreateDocumentDto.prototype, "amount", void 0);
-__decorate([
-    IsOptional(),
-    IsIn(ALL_DOCUMENT_STATUSES),
-    __metadata("design:type", String)
-], CreateDocumentDto.prototype, "status", void 0);
 __decorate([
     IsOptional(),
     IsString(),

@@ -8,11 +8,12 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import BarChartIcon from "@mui/icons-material/BarChart";
-import DescriptionIcon from "@mui/icons-material/Description";
+import CategoryIcon from "@mui/icons-material/Category";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
 import GridViewIcon from "@mui/icons-material/GridView";
 import HistoryIcon from "@mui/icons-material/History";
+import Inventory2Icon from "@mui/icons-material/Inventory2";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 import SettingsIcon from "@mui/icons-material/Settings";
 import ShieldIcon from "@mui/icons-material/Shield";
@@ -89,6 +90,22 @@ const SUB_ROW_SX = {
   fontSize: 14,
 } as const;
 
+/*
+ * ป้ายเมนูต้องชิดซ้ายเสมอ
+ * - MUI wrap label เป็น text node ตรง ๆ (ไม่มี element ครอบ)
+ *   ทำให้เวลาข้อความยาวแล้ว wrap 2 บรรทัด
+ *   แต่ button มี text-align: center จาก MUI
+ *   ทำให้แต่ละบรรทัดถูกจัดกึ่งกลาง -> ดูเหมือนกลางแถว
+ * - wrap ด้วย element ที่กำหนดเอง เพื่อคุม text-align
+ *   และให้ label ยืด/หดตามช่องว่างระหว่างไอคอน
+ */
+const LABEL_SX = {
+  flex: 1,
+  minWidth: 0,
+  textAlign: "left",
+  overflowWrap: "break-word",
+} as const;
+
 export default function DashboardSidebar({
   user,
   permissions,
@@ -125,15 +142,38 @@ export default function DashboardSidebar({
     },
     {
       kind: "link",
-      href: "/sales-pipeline",
-      label: t("salesPipeline"),
+      href: "/order-pipeline",
+      label: t("orderPipeline"),
       icon: <FilterAltIcon fontSize="small" />,
     },
     {
       kind: "link",
-      href: "/documents",
-      label: t("documents"),
-      icon: <DescriptionIcon fontSize="small" />,
+      href: "/products",
+      label: t("products"),
+      icon: <Inventory2Icon fontSize="small" />,
+    },
+    {
+      kind: "group",
+      key: "productManagement",
+      label: t("productManagement"),
+      icon: <CategoryIcon fontSize="small" />,
+      matches: (path) =>
+        path.startsWith("/product-groups") ||
+        path.startsWith("/product-units"),
+      children: [
+        {
+          kind: "link",
+          href: "/product-groups",
+          label: t("productGroups"),
+          icon: <CategoryIcon fontSize="small" />,
+        },
+        {
+          kind: "link",
+          href: "/product-units",
+          label: t("productUnits"),
+          icon: <Inventory2Icon fontSize="small" />,
+        },
+      ],
     },
     {
       kind: "group",
@@ -156,8 +196,8 @@ export default function DashboardSidebar({
         },
         {
           kind: "link",
-          href: "/reports/sales-pipeline",
-          label: t("reportsSalesPipeline"),
+          href: "/reports/order-pipeline",
+          label: t("reportsOrderPipeline"),
           icon: <FilterAltIcon fontSize="small" />,
         },
       ],
@@ -208,6 +248,10 @@ export default function DashboardSidebar({
 
     if (entry.key === "reports") {
       return permissions.reports;
+    }
+
+    if (entry.key === "productManagement") {
+      return permissions.productManagement;
     }
 
     const childVisible = entry.children.some((child) => {
@@ -354,7 +398,11 @@ export default function DashboardSidebar({
                   }),
                 }}
               >
-                {!collapsed && entry.label}
+                {!collapsed && (
+                  <Box component="span" sx={LABEL_SX}>
+                    {entry.label}
+                  </Box>
+                )}
               </Button>
             );
 
@@ -429,7 +477,11 @@ export default function DashboardSidebar({
                 }),
               }}
             >
-              {!collapsed && entry.label}
+              {!collapsed && (
+                <Box component="span" sx={LABEL_SX}>
+                  {entry.label}
+                </Box>
+              )}
             </Button>
           );
 
@@ -500,7 +552,12 @@ export default function DashboardSidebar({
                             },
                           }}
                         >
-                          {child.label}
+                          <Box
+                            component="span"
+                            sx={LABEL_SX}
+                          >
+                            {child.label}
+                          </Box>
                         </Button>
                       );
                     })}
@@ -546,7 +603,11 @@ export default function DashboardSidebar({
           }),
         }}
       >
-        {!collapsed && t("logout")}
+        {!collapsed && (
+          <Box component="span" sx={LABEL_SX}>
+            {t("logout")}
+          </Box>
+        )}
       </Button>
     </Stack>
   );

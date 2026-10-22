@@ -9,7 +9,6 @@ export declare class DocumentRecord {
     refDocId: number | null;
     refDocNo: string | null;
     amount: number;
-    status: string;
     note: string | null;
     createdBy: number | null;
     createdAt: Date;

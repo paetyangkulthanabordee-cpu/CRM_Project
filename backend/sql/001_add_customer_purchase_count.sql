@@ -1,4 +1,4 @@
--- เพิ่มจำนวนการซื้อ (นับใบเสร็จรับเงินที่สำเร็จ) ให้ลูกค้า
+-- เพิ่มจำนวนการซื้อ (นับใบเสร็จรับเงินทั้งหมด) ให้ลูกค้า
 -- รันครั้งเดียวบน PostgreSQL ก่อน restart backend
 -- ค่าในคอลัมน์นี้ถูกคำนวณใหม่โดย DocumentsService ทุกครั้งที่เอกสารเปลี่ยน
 
@@ -12,5 +12,4 @@ SET purchase_count = (
   FROM documents d
   WHERE d.customer_id = c.customer_id
     AND d.doc_type = 'receipt'
-    AND d.status = 'completed'
 );

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module.js';
@@ -7,6 +8,8 @@ async function bootstrap() {
         origin: process.env.CORS_ORIGIN ??
             'http://localhost:3000',
         credentials: true,
+        methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization'],
     });
     app.setGlobalPrefix('api');
     app.useGlobalPipes(new ValidationPipe({

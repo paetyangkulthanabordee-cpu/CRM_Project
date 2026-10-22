@@ -22,7 +22,6 @@ let DocumentRecord = class DocumentRecord {
     refDocId;
     refDocNo;
     amount;
-    status;
     note;
     createdBy;
     createdAt;
@@ -75,10 +74,6 @@ __decorate([
     }),
     __metadata("design:type", Number)
 ], DocumentRecord.prototype, "amount", void 0);
-__decorate([
-    Column({ length: 20 }),
-    __metadata("design:type", String)
-], DocumentRecord.prototype, "status", void 0);
 __decorate([
     Column({ type: 'text', nullable: true }),
     __metadata("design:type", Object)

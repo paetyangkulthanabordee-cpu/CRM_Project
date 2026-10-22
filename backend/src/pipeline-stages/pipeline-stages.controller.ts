@@ -28,6 +28,9 @@ export class PipelineStagesController {
    * อ่านคอลัมน์ได้ทุกคนที่เข้าถึง Sales Pipeline
    * (บอร์ดต้องแสดงคอลัมน์ตรงกับที่แอดมินตั้งค่าไว้)
    * ส่วนเพิ่ม/แก้/ลบ/จัดลำดับ ปิดไว้ให้ Administration เท่านั้น
+   *
+   * หมายเหตุ: ตารางนี้เป็นของ Sales Pipeline (บอร์ดลูกค้า)
+   * ส่วน Order Pipeline (บอร์ดใบสั่งซื้อ) ใช้ตาราง order_pipeline
    */
   constructor(
     private readonly stagesService: PipelineStagesService,

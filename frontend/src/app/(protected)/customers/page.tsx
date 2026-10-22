@@ -14,6 +14,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchIcon from "@mui/icons-material/Search";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
+import TableViewOutlinedIcon from "@mui/icons-material/TableViewOutlined";
+import ViewKanbanOutlinedIcon from "@mui/icons-material/ViewKanbanOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
@@ -40,6 +42,8 @@ import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 
 import CustomerDetailDialog, {
@@ -47,8 +51,14 @@ import CustomerDetailDialog, {
   formatDate,
   initials,
 } from "@/components/CustomerDetailDialog";
+import CustomersKanbanView from "@/components/CustomersKanbanView";
 import { api, getErrorMessage } from "@/lib/api";
+import {
+  emptySummary,
+  summarizeDocs,
+} from "@/lib/customerDocs";
 import { useApi } from "@/lib/swr";
+import { useStoredPreference } from "@/lib/useStoredPreference";
 
 import { useSession } from "@/lib/useSession";
 
@@ -68,6 +78,21 @@ type DateFilter =
   | "7d"
   | "30d";
 
+/*
+ * มุมมองการแสดงผลของหน้าลูกค้า
+ */
+const VIEW_OPTIONS = ["table", "kanban"] as const;
+
+type CustomerView = (typeof VIEW_OPTIONS)[number];
+
+const VIEW_STORAGE_KEY = "customers-view";
+
+/*
+ * จำนวนสูงสุดที่บอร์ด Kanban ดึงมาได้
+ * (backend จำกัด limit ไว้ที่ 100)
+ */
+const BOARD_LIMIT = 100;
+
 interface CustomerForm {
   companyName: string;
   email: string;
@@ -83,75 +108,6 @@ const emptyForm: CustomerForm = {
 };
 
 
-
-interface DocSummary {
-  quotation: { count: number; total: number };
-  invoice: { count: number; total: number };
-  receipt: { count: number; total: number };
-  outstanding: number;
-}
-
-function emptySummary(): DocSummary {
-  return {
-    quotation: { count: 0, total: 0 },
-    invoice: { count: 0, total: 0 },
-    receipt: { count: 0, total: 0 },
-    outstanding: 0,
-  };
-}
-
-function summarizeDocs(
-  docs: DocumentItem[],
-): Record<number, DocSummary> {
-  const result: Record<number, DocSummary> = {};
-
-  for (const doc of docs) {
-    const customerId = doc.customerId;
-
-    if (customerId === null) {
-      continue;
-    }
-
-    const summary = result[customerId] ?? emptySummary();
-
-    if (
-      doc.status === "cancelled" ||
-      doc.status === "void"
-    ) {
-      continue;
-    }
-
-    if (doc.docType === "quotation") {
-      summary.quotation.count += 1;
-      summary.quotation.total += doc.amount;
-    }
-
-    if (doc.docType === "invoice") {
-      summary.invoice.count += 1;
-      summary.invoice.total += doc.amount;
-    }
-
-    if (doc.docType === "receipt") {
-      summary.receipt.count += 1;
-      summary.receipt.total += doc.amount;
-    }
-
-    result[customerId] = summary;
-  }
-
-  for (const [customerId, summary] of Object.entries(
-    result,
-  )) {
-    summary.outstanding = Math.max(
-      summary.invoice.total - summary.receipt.total,
-      0,
-    );
-
-    result[Number(customerId)] = summary;
-  }
-
-  return result;
-}
 
 export default function CustomersPage() {
   const t = useTranslations("customers");
@@ -196,12 +152,20 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1);
   const rowsPerPage = 10;
 
-  const customersUrl = useMemo(() => {
-    if (!ready || !user) return null;
+  /*
+   * มุมมองที่ผู้ใช้เลือก (ตาราง / บอร์ด) จำค่าไว้ข้ามการเปิดหน้าใหม่
+   */
+  const [view, setView] = useStoredPreference<CustomerView>(
+    VIEW_STORAGE_KEY,
+    "table",
+    VIEW_OPTIONS,
+  );
 
+  /*
+   * ตัวกรองที่ใช้ร่วมกันทั้งสองมุมมอง
+   */
+  const baseQuery = useMemo(() => {
     const params = new URLSearchParams();
-    params.set("limit", String(rowsPerPage));
-    params.set("page", String(page));
 
     if (search.trim()) {
       params.set("search", search.trim());
@@ -229,21 +193,75 @@ export default function CustomersPage() {
       );
     }
 
+    return params.toString();
+  }, [search, statusFilter, dateFilter]);
+
+  /*
+   * ตาราง = paginate จาก server
+   */
+  const tableUrl = useMemo(() => {
+    if (!ready || !user) return null;
+
+    const params = new URLSearchParams(baseQuery);
+    params.set("limit", String(rowsPerPage));
+    params.set("page", String(page));
+
     return `/api/customers?${params.toString()}`;
-  }, [ready, user, page, search, statusFilter, dateFilter, rowsPerPage]);
+  }, [ready, user, baseQuery, page, rowsPerPage]);
+
+  /*
+   * บอร์ด = ดึงมาทั้งหมดในครั้งเดียว (ไม่ paginate)
+   */
+  const boardUrl = useMemo(() => {
+    if (!ready || !user) return null;
+
+    const params = new URLSearchParams(baseQuery);
+    params.set("limit", String(BOARD_LIMIT));
+
+    return `/api/customers?${params.toString()}`;
+  }, [ready, user, baseQuery]);
 
   const {
-    data: customersData,
-    isLoading: loading,
-    error: loadError,
-    mutate: reloadCustomers,
-  } = useApi<{ data: Customer[]; total: number }>(customersUrl);
+    data: tableData,
+    isLoading: tableLoading,
+    error: tableError,
+    mutate: reloadTable,
+  } = useApi<{ data: Customer[]; total: number }>(tableUrl);
+
+  const {
+    data: boardData,
+    isLoading: boardLoading,
+    error: boardError,
+    mutate: reloadBoard,
+  } = useApi<{ data: Customer[]; total: number }>(boardUrl);
+
+  /*
+   * อ่านค่าจากมุมมองที่กำลังแสดงอยู่เท่านั้น
+   */
+  const customersData =
+    view === "table" ? tableData : boardData;
+  const loading =
+    view === "table" ? tableLoading : boardLoading;
+  const loadError =
+    view === "table" ? tableError : boardError;
+
   const { data: stagesData } = useApi<PipelineStage[]>(
     ready && user ? "/api/pipeline-stages" : null,
   );
   const { data: docsData } = useApi<{ data: DocumentItem[]; total: number }>(
     ready && user ? "/api/documents?limit=100" : null,
   );
+
+  /*
+   * แก้ไขข้อมูลแล้วต้องรีเฟรชทั้งสองมุมมอง
+   * เพื่อไม่ให้ข้อมูลเก่าค้างอยู่ตอนสลับมุมมอง
+   */
+  const reloadCustomers = useCallback(async () => {
+    await Promise.all([
+      reloadTable(),
+      reloadBoard(),
+    ]);
+  }, [reloadTable, reloadBoard]);
 
   const customers = useMemo(
     () => customersData?.data ?? [],
@@ -285,8 +303,16 @@ export default function CustomersPage() {
     [],
   );
 
+  /*
+   * เปลี่ยนสถานะของลูกค้า
+   * ต้องรีเฟรชข้อมูลจริงกลับมาให้เสร็จก่อนจบ
+   * เพื่อให้บอร์ดอัปเดตตามข้อมูลล่าสุด
+   */
   const handleMoveCustomer = useCallback(
-    async (customerId: number, status: string) => {
+    async (
+      customerId: number,
+      status: string,
+    ): Promise<void> => {
       try {
         await api.patch(`/api/customers/${customerId}`, { status });
         showNotice(t("statusUpdated"), "success");
@@ -296,7 +322,7 @@ export default function CustomersPage() {
         await reloadCustomers();
       }
     },
-    [t, reloadCustomers],
+    [t, showNotice, reloadCustomers],
   );
 
   const docSummary = useMemo(
@@ -562,8 +588,10 @@ export default function CustomersPage() {
     permissions ?? {
       dashboard: true,
       customers: true,
-      salesPipeline: true,
+      orderPipeline: true,
       documents: true,
+      products: true,
+      productManagement: true,
       reports: true,
       administration: user.role === "ADMIN",
       permissions: user.role === "ADMIN",
@@ -908,10 +936,70 @@ export default function CustomersPage() {
             </Button>
           )}
 
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={view}
+            onChange={(
+              event,
+              next: CustomerView | null,
+            ) => {
+              if (!next) {
+                return;
+              }
+
+              setView(next);
+            }}
+            aria-label={t("viewLabel")}
+            sx={{
+              ml: "auto",
+              bgcolor: "#f1f5f9",
+              borderRadius: "10px",
+              p: 0.4,
+              gap: 0.4,
+              "& .MuiToggleButtonGroup-grouped": {
+                border: "none",
+                borderRadius: "8px !important",
+                px: 1.25,
+                py: 0.6,
+                textTransform: "none",
+                fontWeight: 700,
+                fontSize: 13,
+                color: "#64748b",
+                lineHeight: 1.2,
+              },
+              "& .Mui-selected": {
+                bgcolor: "#ffffff !important",
+                color: "#2563eb !important",
+                boxShadow:
+                  "0 1px 3px rgba(15,23,42,0.12)",
+              },
+            }}
+          >
+            <ToggleButton
+              value="table"
+              aria-label={t("viewTable")}
+            >
+              <TableViewOutlinedIcon
+                sx={{ fontSize: 18, mr: 0.75 }}
+              />
+              {t("viewTable")}
+            </ToggleButton>
+
+            <ToggleButton
+              value="kanban"
+              aria-label={t("viewKanban")}
+            >
+              <ViewKanbanOutlinedIcon
+                sx={{ fontSize: 18, mr: 0.75 }}
+              />
+              {t("viewKanban")}
+            </ToggleButton>
+          </ToggleButtonGroup>
+
           <Typography
             variant="body2"
             sx={{
-              ml: "auto",
               fontWeight: 700,
               color: "#64748b",
               whiteSpace: "nowrap",
@@ -930,546 +1018,558 @@ export default function CustomersPage() {
         )}
 
         {/* =================================================
-            TABLE
+            TABLE / KANBAN
         ================================================== */}
 
-        <Card
-          sx={{
-            border: "1px solid #e7ebf2",
-            borderRadius: "16px",
-            boxShadow:
-              "0 1px 3px rgba(15,23,42,0.04)",
-            overflow: "hidden",
-          }}
-        >
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow
-                  sx={{ bgcolor: "#fafcff" }}
-                >
-                  <TableCell
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("companyCustomer")}
-                  </TableCell>
-
-                  <TableCell
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("salesResponsible")}
-                  </TableCell>
-
-                  <TableCell
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("pipelineStatus")}
-                  </TableCell>
-
-                  <TableCell
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("documentsColumn")}
-                    <Typography
-                      component="span"
-                      variant="caption"
-                      sx={{
-                        display: "block",
-                        fontWeight: 500,
-                        color: "#94a3b8",
-                      }}
-                    >
-                      {t("documentsSub")}
-                    </Typography>
-                  </TableCell>
-
-                  <TableCell
-                    align="right"
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("outstanding")}
-                  </TableCell>
-
-                  <TableCell
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("dateAdded")}
-                  </TableCell>
-
-                  <TableCell
-                    align="right"
-                    sx={{
-                      fontWeight: 800,
-                      color: "#475569",
-                    }}
-                  >
-                    {t("actions")}
-                  </TableCell>
-                </TableRow>
-              </TableHead>
-
-              <TableBody>
-                {loading ? (
-                  Array.from({
-                    length: 6,
-                  }).map((_, row) => (
-                    <TableRow key={`skeleton-${row}`}>
-                      {[220, 150, 140, 170, 110, 90, 140].map(
-                        (width, cell) => (
-                          <TableCell key={cell}>
-                            <Skeleton
-                              width={width}
-                              height={26}
-                            />
-                          </TableCell>
-                        ),
-                      )}
-                    </TableRow>
-                  ))
-                ) : customers.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={7}>
-                      <Box
-                        sx={{
-                          py: 7,
-                          textAlign: "center",
-                        }}
-                      >
-                        <SearchOffIcon
-                          sx={{
-                            fontSize: 38,
-                            color: "#cbd5e1",
-                          }}
-                        />
-
-                        <Typography
-                          sx={{
-                            mt: 1.5,
-                            fontWeight: 800,
-                            color: "#172033",
-                          }}
-                        >
-                          {hasFilter
-                            ? t("noResults")
-                            : t("noCustomers")}
-                        </Typography>
-
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            mt: 0.5,
-                            color: "#94a3b8",
-                          }}
-                        >
-                          {hasFilter
-                            ? t("noResultsHint")
-                            : t("noCustomersHint")}
-                        </Typography>
-
-                        {hasFilter && (
-                          <Button
-                            onClick={resetFilters}
-                            sx={{
-                              mt: 1.5,
-                              textTransform: "none",
-                            }}
-                          >
-                            {t("clearFilters")}
-                          </Button>
-                        )}
-                      </Box>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  customers.map((customer) => {
-                    const stage =
-                      stageByKey[customer.status];
-
-                    const summary =
-                      docSummary[customer.customerId] ??
-                      emptySummary();
-
-                    const assigned =
-                      customer.assignedUser?.name ??
-                      null;
-
-                    return (
-                      <TableRow
-                        key={customer.customerId}
-                        hover
-                        onClick={() =>
-                          setDetailTarget(customer)
-                        }
-                        sx={{
-                          cursor: "pointer",
-                          "&:last-child td": {
-                            borderBottom: 0,
-                          },
-                        }}
-                      >
-                        <TableCell>
-                          <Typography
-                            sx={{
-                              fontWeight: 800,
-                              color: "#0f172a",
-                            }}
-                          >
-                            {
-                              customer.companyName
-                            }
-                          </Typography>
-
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              color: "#64748b",
-                            }}
-                          >
-                            {customer.email ||
-                              "-"}
-                            {" · "}
-                            {customer.phone || "-"}
-                          </Typography>
-                        </TableCell>
-
-                        <TableCell>
-                          {assigned ? (
-                            <Box
-                              sx={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 1,
-                              }}
-                            >
-                              <Avatar
-                                sx={{
-                                  width: 28,
-                                  height: 28,
-                                  fontSize: 11,
-                                  fontWeight: 800,
-                                  bgcolor: "#e8f1ff",
-                                  color: "#1d4ed8",
-                                }}
-                              >
-                                {initials(assigned)}
-                              </Avatar>
-
-                              <Typography
-                                variant="body2"
-                                sx={{
-                                  fontWeight: 700,
-                                  color: "#334155",
-                                }}
-                              >
-                                {assigned}
-                              </Typography>
-                            </Box>
-                          ) : (
-                            <Typography
-                              variant="body2"
-                              sx={{ color: "#94a3b8" }}
-                            >
-                              {t("unassigned")}
-                            </Typography>
-                          )}
-                        </TableCell>
-
-                        <TableCell>
-                          <Chip
-                            size="small"
-                            label={
-                              stage?.label ??
-                              customer.status
-                            }
-                            sx={{
-                              fontWeight: 700,
-                              borderRadius: "8px",
-                              color: "#ffffff",
-                              bgcolor:
-                                stage?.color ??
-                                "#94a3b8",
-                            }}
-                          />
-                        </TableCell>
-
-                        <TableCell>
-                          <Stack
-                            direction="row"
-                            spacing={0.75}
-                          >
-                            {[
-                              {
-                                label: "QT",
-                                count:
-                                  summary.quotation
-                                    .count,
-                                color: "#2563eb",
-                              },
-                              {
-                                label: "IV",
-                                count:
-                                  summary.invoice
-                                    .count,
-                                color: "#f97316",
-                              },
-                              {
-                                label: "RC",
-                                count:
-                                  summary.receipt
-                                    .count,
-                                color: "#16a34a",
-                              },
-                            ].map((item) => (
-                              <Chip
-                                key={item.label}
-                                size="small"
-                                label={`${item.label} ${item.count}`}
-                                sx={{
-                                  fontWeight: 800,
-                                  fontSize: 11,
-                                  borderRadius: "7px",
-                                  bgcolor:
-                                    item.count > 0
-                                      ? `${item.color}14`
-                                      : "#f4f6f9",
-                                  color:
-                                    item.count > 0
-                                      ? item.color
-                                      : "#94a3b8",
-                                }}
-                              />
-                            ))}
-                          </Stack>
-                        </TableCell>
-
-                        <TableCell align="right">
-                          <Typography
-                            sx={{
-                              fontWeight: 800,
-                              color:
-                                summary.outstanding >
-                                0
-                                  ? "#dc2626"
-                                  : "#94a3b8",
-                            }}
-                          >
-                            {formatBaht(
-                              summary.outstanding,
-                            )}
-                          </Typography>
-                        </TableCell>
-
-                        <TableCell>
-                          <Typography
-                            variant="body2"
-                            sx={{ color: "#475569" }}
-                          >
-                            {formatDate(
-                              customer.createdAt,
-                            )}
-                          </Typography>
-                        </TableCell>
-
-                        <TableCell align="right">
-                          <Stack
-                            direction="row"
-                            spacing={0.5}
-                            sx={{
-                              justifyContent:
-                                "flex-end",
-                            }}
-                          >
-                            <IconButton
-                              size="small"
-                              aria-label={t("viewDetails")}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setDetailTarget(
-                                  customer,
-                                );
-                              }}
-                              sx={{
-                                color: "#64748b",
-                              }}
-                            >
-                              <VisibilityOutlinedIcon fontSize="small" />
-                            </IconButton>
-
-                            <IconButton
-                              size="small"
-                              aria-label={t("editCustomer")}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openEdit(customer);
-                              }}
-                              sx={{
-                                color: "#64748b",
-                              }}
-                            >
-                              <EditOutlinedIcon fontSize="small" />
-                            </IconButton>
-
-                            <IconButton
-                              size="small"
-                              aria-label={t("deleteCustomer")}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setDeleteTarget(
-                                  customer,
-                                );
-                              }}
-                              sx={{ color: "#dc2626" }}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Stack>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-
-          <Box
+        {view === "table" ? (
+          <Card
             sx={{
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: 0.5,
-              py: 2,
-              borderTop: "1px solid #eef1f6",
+              border: "1px solid #e7ebf2",
+              borderRadius: "16px",
+              boxShadow:
+                "0 1px 3px rgba(15,23,42,0.04)",
+              overflow: "hidden",
             }}
           >
-            <IconButton
-              size="small"
-              disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
-              aria-label={t("previousPage")}
+            <TableContainer>
+              <Table>
+                <TableHead>
+                  <TableRow
+                    sx={{ bgcolor: "#fafcff" }}
+                  >
+                    <TableCell
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("companyCustomer")}
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("salesResponsible")}
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("pipelineStatus")}
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("documentsColumn")}
+                      <Typography
+                        component="span"
+                        variant="caption"
+                        sx={{
+                          display: "block",
+                          fontWeight: 500,
+                          color: "#94a3b8",
+                        }}
+                      >
+                        {t("documentsSub")}
+                      </Typography>
+                    </TableCell>
+
+                    <TableCell
+                      align="right"
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("outstanding")}
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("dateAdded")}
+                    </TableCell>
+
+                    <TableCell
+                      align="right"
+                      sx={{
+                        fontWeight: 800,
+                        color: "#475569",
+                      }}
+                    >
+                      {t("actions")}
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+
+                <TableBody>
+                  {loading ? (
+                    Array.from({
+                      length: 6,
+                    }).map((_, row) => (
+                      <TableRow key={`skeleton-${row}`}>
+                        {[220, 150, 140, 170, 110, 90, 140].map(
+                          (width, cell) => (
+                            <TableCell key={cell}>
+                              <Skeleton
+                                width={width}
+                                height={26}
+                              />
+                            </TableCell>
+                          ),
+                        )}
+                      </TableRow>
+                    ))
+                  ) : customers.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7}>
+                        <Box
+                          sx={{
+                            py: 7,
+                            textAlign: "center",
+                          }}
+                        >
+                          <SearchOffIcon
+                            sx={{
+                              fontSize: 38,
+                              color: "#cbd5e1",
+                            }}
+                          />
+
+                          <Typography
+                            sx={{
+                              mt: 1.5,
+                              fontWeight: 800,
+                              color: "#172033",
+                            }}
+                          >
+                            {hasFilter
+                              ? t("noResults")
+                              : t("noCustomers")}
+                          </Typography>
+
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              mt: 0.5,
+                              color: "#94a3b8",
+                            }}
+                          >
+                            {hasFilter
+                              ? t("noResultsHint")
+                              : t("noCustomersHint")}
+                          </Typography>
+
+                          {hasFilter && (
+                            <Button
+                              onClick={resetFilters}
+                              sx={{
+                                mt: 1.5,
+                                textTransform: "none",
+                              }}
+                            >
+                              {t("clearFilters")}
+                            </Button>
+                          )}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    customers.map((customer) => {
+                      const stage =
+                        stageByKey[customer.status];
+
+                      const summary =
+                        docSummary[customer.customerId] ??
+                        emptySummary();
+
+                      const assigned =
+                        customer.assignedUser?.name ??
+                        null;
+
+                      return (
+                        <TableRow
+                          key={customer.customerId}
+                          hover
+                          onClick={() =>
+                            setDetailTarget(customer)
+                          }
+                          sx={{
+                            cursor: "pointer",
+                            "&:last-child td": {
+                              borderBottom: 0,
+                            },
+                          }}
+                        >
+                          <TableCell>
+                            <Typography
+                              sx={{
+                                fontWeight: 800,
+                                color: "#0f172a",
+                              }}
+                            >
+                              {
+                                customer.companyName
+                              }
+                            </Typography>
+
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                color: "#64748b",
+                              }}
+                            >
+                              {customer.email ||
+                                "-"}
+                              {" · "}
+                              {customer.phone || "-"}
+                            </Typography>
+                          </TableCell>
+
+                          <TableCell>
+                            {assigned ? (
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 1,
+                                }}
+                              >
+                                <Avatar
+                                  sx={{
+                                    width: 28,
+                                    height: 28,
+                                    fontSize: 11,
+                                    fontWeight: 800,
+                                    bgcolor: "#e8f1ff",
+                                    color: "#1d4ed8",
+                                  }}
+                                >
+                                  {initials(assigned)}
+                                </Avatar>
+
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    fontWeight: 700,
+                                    color: "#334155",
+                                  }}
+                                >
+                                  {assigned}
+                                </Typography>
+                              </Box>
+                            ) : (
+                              <Typography
+                                variant="body2"
+                                sx={{ color: "#94a3b8" }}
+                              >
+                                {t("unassigned")}
+                              </Typography>
+                            )}
+                          </TableCell>
+
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={
+                                stage?.label ??
+                                customer.status
+                              }
+                              sx={{
+                                fontWeight: 700,
+                                borderRadius: "8px",
+                                color: "#ffffff",
+                                bgcolor:
+                                  stage?.color ??
+                                  "#94a3b8",
+                              }}
+                            />
+                          </TableCell>
+
+                          <TableCell>
+                            <Stack
+                              direction="row"
+                              spacing={0.75}
+                            >
+                              {[
+                                {
+                                  label: "QT",
+                                  count:
+                                    summary.quotation
+                                      .count,
+                                  color: "#2563eb",
+                                },
+                                {
+                                  label: "IV",
+                                  count:
+                                    summary.invoice
+                                      .count,
+                                  color: "#f97316",
+                                },
+                                {
+                                  label: "RC",
+                                  count:
+                                    summary.receipt
+                                      .count,
+                                  color: "#16a34a",
+                                },
+                              ].map((item) => (
+                                <Chip
+                                  key={item.label}
+                                  size="small"
+                                  label={`${item.label} ${item.count}`}
+                                  sx={{
+                                    fontWeight: 800,
+                                    fontSize: 11,
+                                    borderRadius: "7px",
+                                    bgcolor:
+                                      item.count > 0
+                                        ? `${item.color}14`
+                                        : "#f4f6f9",
+                                    color:
+                                      item.count > 0
+                                        ? item.color
+                                        : "#94a3b8",
+                                  }}
+                                />
+                              ))}
+                            </Stack>
+                          </TableCell>
+
+                          <TableCell align="right">
+                            <Typography
+                              sx={{
+                                fontWeight: 800,
+                                color:
+                                  summary.outstanding >
+                                  0
+                                    ? "#dc2626"
+                                    : "#94a3b8",
+                              }}
+                            >
+                              {formatBaht(
+                                summary.outstanding,
+                              )}
+                            </Typography>
+                          </TableCell>
+
+                          <TableCell>
+                            <Typography
+                              variant="body2"
+                              sx={{ color: "#475569" }}
+                            >
+                              {formatDate(
+                                customer.createdAt,
+                              )}
+                            </Typography>
+                          </TableCell>
+
+                          <TableCell align="right">
+                            <Stack
+                              direction="row"
+                              spacing={0.5}
+                              sx={{
+                                justifyContent:
+                                  "flex-end",
+                              }}
+                            >
+                              <IconButton
+                                size="small"
+                                aria-label={t("viewDetails")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setDetailTarget(
+                                    customer,
+                                  );
+                                }}
+                                sx={{
+                                  color: "#64748b",
+                                }}
+                              >
+                                <VisibilityOutlinedIcon fontSize="small" />
+                              </IconButton>
+
+                              <IconButton
+                                size="small"
+                                aria-label={t("editCustomer")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openEdit(customer);
+                                }}
+                                sx={{
+                                  color: "#64748b",
+                                }}
+                              >
+                                <EditOutlinedIcon fontSize="small" />
+                              </IconButton>
+
+                              <IconButton
+                                size="small"
+                                aria-label={t("deleteCustomer")}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setDeleteTarget(
+                                    customer,
+                                  );
+                                }}
+                                sx={{ color: "#dc2626" }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            <Box
               sx={{
-                color: "#64748b",
-                "&.Mui-disabled": {
-                  color: "#cbd5e1",
-                },
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 0.5,
+                py: 2,
+                borderTop: "1px solid #eef1f6",
               }}
             >
-              <ChevronLeftIcon fontSize="small" />
-            </IconButton>
+              <IconButton
+                size="small"
+                disabled={page <= 1}
+                onClick={() => setPage(page - 1)}
+                aria-label={t("previousPage")}
+                sx={{
+                  color: "#64748b",
+                  "&.Mui-disabled": {
+                    color: "#cbd5e1",
+                  },
+                }}
+              >
+                <ChevronLeftIcon fontSize="small" />
+              </IconButton>
 
-            {(() => {
-              const pages: (number | "...")[] = [];
-              const total = totalPages;
-              const current = page;
+              {(() => {
+                const pages: (number | "...")[] = [];
+                const total = totalPages;
+                const current = page;
 
-              if (total <= 7) {
-                for (let i = 1; i <= total; i++) {
-                  pages.push(i);
+                if (total <= 7) {
+                  for (let i = 1; i <= total; i++) {
+                    pages.push(i);
+                  }
+                } else {
+                  pages.push(1);
+
+                  if (current > 3) {
+                    pages.push("...");
+                  }
+
+                  const start = Math.max(2, current - 1);
+                  const end = Math.min(
+                    total - 1,
+                    current + 1,
+                  );
+
+                  for (let i = start; i <= end; i++) {
+                    pages.push(i);
+                  }
+
+                  if (current < total - 2) {
+                    pages.push("...");
+                  }
+
+                  pages.push(total);
                 }
-              } else {
-                pages.push(1);
 
-                if (current > 3) {
-                  pages.push("...");
-                }
-
-                const start = Math.max(2, current - 1);
-                const end = Math.min(
-                  total - 1,
-                  current + 1,
-                );
-
-                for (let i = start; i <= end; i++) {
-                  pages.push(i);
-                }
-
-                if (current < total - 2) {
-                  pages.push("...");
-                }
-
-                pages.push(total);
-              }
-
-              return pages.map((p, idx) =>
-                p === "..." ? (
-                  <Typography
-                    key={`ellipsis-${idx}`}
-                    sx={{
-                      px: 1,
-                      color: "#94a3b8",
-                      fontWeight: 700,
-                      fontSize: 14,
-                    }}
-                  >
-                    ...
-                  </Typography>
-                ) : (
-                  <Button
-                    key={p}
-                    size="small"
-                    onClick={() => setPage(p)}
-                    sx={{
-                      minWidth: 32,
-                      height: 32,
-                      borderRadius: "50%",
-                      fontWeight: 700,
-                      fontSize: 14,
-                      color:
-                        p === current
-                          ? "#ffffff"
-                          : "#475569",
-                      bgcolor:
-                        p === current
-                          ? "#2563eb"
-                          : "transparent",
-                      "&:hover": {
+                return pages.map((p, idx) =>
+                  p === "..." ? (
+                    <Typography
+                      key={`ellipsis-${idx}`}
+                      sx={{
+                        px: 1,
+                        color: "#94a3b8",
+                        fontWeight: 700,
+                        fontSize: 14,
+                      }}
+                    >
+                      ...
+                    </Typography>
+                  ) : (
+                    <Button
+                      key={p}
+                      size="small"
+                      onClick={() => setPage(p)}
+                      sx={{
+                        minWidth: 32,
+                        height: 32,
+                        borderRadius: "50%",
+                        fontWeight: 700,
+                        fontSize: 14,
+                        color:
+                          p === current
+                            ? "#ffffff"
+                            : "#475569",
                         bgcolor:
                           p === current
                             ? "#2563eb"
-                            : "#f1f5f9",
-                      },
-                    }}
-                  >
-                    {p}
-                  </Button>
-                ),
-              );
-            })()}
+                            : "transparent",
+                        "&:hover": {
+                          bgcolor:
+                            p === current
+                              ? "#2563eb"
+                              : "#f1f5f9",
+                        },
+                      }}
+                    >
+                      {p}
+                    </Button>
+                  ),
+                );
+              })()}
 
-            <IconButton
-              size="small"
-              disabled={page >= totalPages}
-              onClick={() => setPage(page + 1)}
-              aria-label={t("nextPage")}
-              sx={{
-                color: "#64748b",
-                "&.MuiDisabled": {
-                  color: "#cbd5e1",
-                },
-              }}
-            >
-              <ChevronRightIcon fontSize="small" />
-            </IconButton>
-          </Box>
-        </Card>
+              <IconButton
+                size="small"
+                disabled={page >= totalPages}
+                onClick={() => setPage(page + 1)}
+                aria-label={t("nextPage")}
+                sx={{
+                  color: "#64748b",
+                  "&.MuiDisabled": {
+                    color: "#cbd5e1",
+                  },
+                }}
+              >
+                <ChevronRightIcon fontSize="small" />
+              </IconButton>
+            </Box>
+          </Card>
+        ) : (
+          <CustomersKanbanView
+            customers={customers}
+            stages={stages}
+            docSummary={docSummary}
+            onOpen={setDetailTarget}
+            onStageChange={handleMoveCustomer}
+            emptyColumnLabel={t("kanbanEmpty")}
+            unassignedLabel={t("unassigned")}
+          />
+        )}
       </Box>
 
       {/* =================================================

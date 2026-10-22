@@ -9,12 +9,16 @@ export declare class DocumentsController {
     stats(): Promise<Record<string, {
         count: number;
         total: number;
-        pendingAmount: number;
     }>>;
-    findAll(query: ListDocumentsDto): Promise<(import("./entities/document.entity.js").DocumentRecord & {
-        customerName: any;
-        creatorName: any;
-    })[]>;
+    findAll(query: ListDocumentsDto): Promise<{
+        data: (import("./entities/document.entity.js").DocumentRecord & {
+            customerName: any;
+            creatorName: any;
+        })[];
+        total: number;
+        page: number;
+        limit: number;
+    }>;
     findOne(id: number): Promise<import("./entities/document.entity.js").DocumentRecord & {
         customerName: any;
         creatorName: any;

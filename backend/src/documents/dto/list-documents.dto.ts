@@ -17,10 +17,6 @@ export class ListDocumentsDto {
 
   @IsOptional()
   @IsString()
-  status?: string;
-
-  @IsOptional()
-  @IsString()
   search?: string;
 
   @IsOptional()

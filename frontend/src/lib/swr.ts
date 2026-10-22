@@ -1,5 +1,7 @@
 import useSWR from "swr";
 
+import type { SWRConfiguration } from "swr";
+
 import { api } from "./api";
 
 export const fetcher = async <T,>(
@@ -11,11 +13,13 @@ export const fetcher = async <T,>(
 
 export const useApi = <T,>(
   url: string | null,
+  options?: SWRConfiguration<T>,
 ) => {
   return useSWR<T>(url, fetcher<T>, {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     dedupingInterval: 5000,
     keepPreviousData: true,
+    ...options,
   });
 };

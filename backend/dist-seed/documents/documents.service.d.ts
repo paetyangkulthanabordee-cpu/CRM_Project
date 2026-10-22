@@ -10,10 +10,15 @@ export declare class DocumentsService {
     private readonly customersRepository;
     private readonly customersService;
     constructor(documentsRepository: Repository<DocumentRecord>, customersRepository: Repository<Customer>, customersService: CustomersService);
-    findAll(query: ListDocumentsDto): Promise<(DocumentRecord & {
-        customerName: any;
-        creatorName: any;
-    })[]>;
+    findAll(query: ListDocumentsDto): Promise<{
+        data: (DocumentRecord & {
+            customerName: any;
+            creatorName: any;
+        })[];
+        total: number;
+        page: number;
+        limit: number;
+    }>;
     findOne(docId: number): Promise<DocumentRecord & {
         customerName: any;
         creatorName: any;
@@ -21,7 +26,6 @@ export declare class DocumentsService {
     stats(): Promise<Record<string, {
         count: number;
         total: number;
-        pendingAmount: number;
     }>>;
     create(dto: CreateDocumentDto, userId: number): Promise<DocumentRecord & {
         customerName: any;
@@ -35,7 +39,6 @@ export declare class DocumentsService {
         docId: number;
         deleted: boolean;
     }>;
-    private assertStatus;
     private assertCustomer;
     private resolveRef;
     private nextDocNo;

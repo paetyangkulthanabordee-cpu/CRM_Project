@@ -393,8 +393,10 @@ export default function UsersPage() {
     permissions ?? {
       dashboard: true,
       customers: true,
-      salesPipeline: true,
+      orderPipeline: true,
       documents: true,
+      products: true,
+      productManagement: true,
       reports: true,
       administration: true,
       permissions: true,

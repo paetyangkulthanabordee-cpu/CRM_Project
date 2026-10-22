@@ -73,8 +73,10 @@ export default function ComingSoonPage({
           permissions ?? {
             dashboard: true,
             customers: true,
-            salesPipeline: true,
+            orderPipeline: true,
             documents: true,
+            products: true,
+            productManagement: true,
             reports: true,
             administration: user.role === "ADMIN",
             permissions: user.role === "ADMIN",

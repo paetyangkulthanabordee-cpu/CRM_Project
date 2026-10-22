@@ -72,6 +72,14 @@ export class CustomersService {
     return { data, total, page, limit };
   }
 
+  /*
+   * จำนวนลูกค้าทั้งหมด (นับทั้งที่ใช้งานอยู่และที่ปิดใช้งาน)
+   * ใช้ตรวจว่ามีลูกค้าในระบบแล้วหรือยัง ก่อน seed ข้อมูลใหม่
+   */
+  async countAll(): Promise<number> {
+    return this.customersRepository.count();
+  }
+
   async findOne(customerId: number) {
     const customer =
       await this.customersRepository.findOne({
@@ -115,7 +123,7 @@ export class CustomersService {
   }
 
   /*
-   * จำนวนการซื้อ = ใบเสร็จรับเงินที่สำเร็จ (ไม่รวมที่ถูก void)
+   * จำนวนการซื้อ = จำนวนใบเสร็จรับเงินทั้งหมดของลูกค้า
    * คำนวณใหม่ทั้งหมดทุกครั้งที่เอกสารของลูกค้าเปลี่ยน
    */
   async recalcPurchaseCount(
@@ -133,7 +141,6 @@ export class CustomersService {
            FROM documents d
            WHERE d.customer_id = c.customer_id
              AND d.doc_type = 'receipt'
-             AND d.status = 'completed'
          )
          WHERE c.customer_id = $1
          RETURNING purchase_count`,
@@ -155,7 +162,6 @@ export class CustomersService {
          FROM documents d
          WHERE d.customer_id = c.customer_id
            AND d.doc_type = 'receipt'
-           AND d.status = 'completed'
        )
        WHERE c.customer_id = ANY($1::int[])`,
       [customerIds],
