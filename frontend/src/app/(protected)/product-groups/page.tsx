@@ -9,6 +9,8 @@ import { useTranslations } from "next-intl";
 import { z } from "zod";
 
 import AddIcon from "@mui/icons-material/Add";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
@@ -20,7 +22,6 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
-import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
@@ -41,10 +42,21 @@ import Typography from "@mui/material/Typography";
 
 import { api, getErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/swr";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
-import type { ProductGroup } from "@/lib/types";
+import type {
+  ProductGroup,
+  ProductGroupList,
+} from "@/lib/types";
+
+/*
+ * หน้าจัดการกลุ่มสินค้า (ตาราง product_group)
+ * เป็นตาราง master: ชื่อกลุ่ม + คำอธิบาย (ไม่มี FK ไปตารางอื่น)
+ * สินค้าผูกกลุ่มผ่าน product.product_group_id (ดูที่หน้า /products)
+ * (คนละตารางกับ /categories ที่จัดการตาราง category)
+ */
 
 interface GroupForm {
   name: string;
@@ -55,6 +67,8 @@ const emptyForm: GroupForm = {
   name: "",
   description: "",
 };
+
+const rowsPerPage = 10;
 
 export default function ProductGroupsPage() {
   const router = useRouter();
@@ -68,6 +82,17 @@ export default function ProductGroupsPage() {
   });
 
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+
+  /*
+   * หน่วงคำค้นก่อนยิง API กันทุก keystroke = 1 request
+   * ช่องค้นหาใน UI ยังคงใช้ค่าสดตามเดิม
+   */
+  const debouncedSearch = useDebouncedValue(
+    search,
+    300,
+  );
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] =
     useState<ProductGroup | null>(null);
@@ -95,37 +120,41 @@ export default function ProductGroupsPage() {
   const canManage =
     permissions?.productManagement === true;
 
-  const listUrl = useMemo(
-    () =>
-      ready && user
-        ? "/api/products/groups"
-        : null,
-    [ready, user],
-  );
+  const listUrl = useMemo(() => {
+    if (!ready || !user) {
+      return null;
+    }
+
+    const params = new URLSearchParams();
+    params.set("limit", String(rowsPerPage));
+    params.set("page", String(page));
+
+    if (debouncedSearch.trim()) {
+      params.set("search", debouncedSearch.trim());
+    }
+
+    return `/api/product-groups?${params.toString()}`;
+  }, [ready, user, page, debouncedSearch]);
 
   const {
-    data: groupsData,
+    data: listData,
     isLoading: loading,
     error: loadError,
     mutate: reloadGroups,
-  } = useApi<ProductGroup[]>(listUrl);
+  } = useApi<ProductGroupList>(listUrl);
 
   const groups = useMemo(
-    () => groupsData ?? [],
-    [groupsData],
+    () => listData?.data ?? [],
+    [listData],
   );
 
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
+  const total = listData?.total ?? 0;
+  const totalPages = Math.max(
+    1,
+    Math.ceil(total / rowsPerPage),
+  );
 
-    if (!keyword) {
-      return groups;
-    }
-
-    return groups.filter((group) =>
-      group.name.toLowerCase().includes(keyword),
-    );
-  }, [groups, search]);
+  const hasFilter = Boolean(search.trim());
 
   useEffect(() => {
     if (!ready) return;
@@ -135,6 +164,15 @@ export default function ProductGroupsPage() {
       return;
     }
   }, [ready, user, router]);
+
+  function resetFilters() {
+    setSearch("");
+    setPage(1);
+  }
+
+  /* =====================================================
+     CREATE / EDIT
+  ===================================================== */
 
   function openCreate() {
     setEditing(null);
@@ -178,12 +216,18 @@ export default function ProductGroupsPage() {
     setSaving(true);
     setFormError("");
 
+    const payload = {
+      name: result.data.name,
+      description:
+        result.data.description || undefined,
+    };
+
     try {
       if (editing) {
         await api.patch(
-          `/products/groups/${editing.id}`,
+          `/api/product-groups/${editing.id}`,
           {
-            name: result.data.name,
+            ...payload,
             description:
               result.data.description || null,
           },
@@ -191,11 +235,10 @@ export default function ProductGroupsPage() {
 
         showNotice(t("groupUpdated"), "success");
       } else {
-        await api.post("/products/groups", {
-          name: result.data.name,
-          description:
-            result.data.description || undefined,
-        });
+        await api.post(
+          "/api/product-groups",
+          payload,
+        );
 
         showNotice(t("groupAdded"), "success");
       }
@@ -220,7 +263,7 @@ export default function ProductGroupsPage() {
 
     try {
       await api.delete(
-        `/products/groups/${deleteTarget.id}`,
+        `/api/product-groups/${deleteTarget.id}`,
       );
 
       showNotice(t("groupDeleted"), "success");
@@ -282,7 +325,7 @@ export default function ProductGroupsPage() {
             flexWrap: "wrap",
           }}
         >
-          <Box>
+          <Box sx={{ minWidth: 0 }}>
             <Typography
               component="div"
               variant="overline"
@@ -368,14 +411,15 @@ export default function ProductGroupsPage() {
             size="small"
             placeholder={t("searchPlaceholder")}
             value={search}
-            onChange={(event) =>
-              setSearch(event.target.value)
-            }
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
             autoComplete="off"
             sx={{
-              minWidth: 260,
+              minWidth: 240,
               flex: 1,
-              maxWidth: 460,
+              maxWidth: 380,
             }}
             slotProps={{
               input: {
@@ -392,7 +436,10 @@ export default function ProductGroupsPage() {
                       size="small"
                       edge="end"
                       aria-label={t("clearFilters")}
-                      onClick={() => setSearch("")}
+                      onClick={() => {
+                        setSearch("");
+                        setPage(1);
+                      }}
                     >
                       <CloseIcon fontSize="small" />
                     </IconButton>
@@ -407,6 +454,20 @@ export default function ProductGroupsPage() {
             }}
           />
 
+          {hasFilter && (
+            <Button
+              size="small"
+              onClick={resetFilters}
+              sx={{
+                textTransform: "none",
+                fontWeight: 700,
+                color: "#2563eb",
+              }}
+            >
+              {t("clearFilters")}
+            </Button>
+          )}
+
           <Typography
             component="span"
             variant="body2"
@@ -416,8 +477,8 @@ export default function ProductGroupsPage() {
               whiteSpace: "nowrap",
             }}
           >
-            {t("showing")} {filtered.length} {t("of")}{" "}
-            {groups.length} {t("entries")}
+            {t("showing")} {groups.length} {t("of")}{" "}
+            {total} {t("entries")}
           </Typography>
         </Card>
 
@@ -447,7 +508,7 @@ export default function ProductGroupsPage() {
               </Typography>
             </CardContent>
           </Card>
-        ) : filtered.length === 0 ? (
+        ) : groups.length === 0 ? (
           <Card
             sx={{
               border: "1px solid #eceff4",
@@ -477,7 +538,7 @@ export default function ProductGroupsPage() {
                   color: "#334155",
                 }}
               >
-                {search
+                {hasFilter
                   ? t("noResults")
                   : t("noGroups")}
               </Typography>
@@ -487,10 +548,31 @@ export default function ProductGroupsPage() {
                 variant="body2"
                 sx={{ mt: 0.5, color: "#94a3b8" }}
               >
-                {search
+                {hasFilter
                   ? t("noResultsHint")
                   : t("noGroupsHint")}
               </Typography>
+
+              {!hasFilter && canManage && (
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={openCreate}
+                  sx={{
+                    mt: 2,
+                    textTransform: "none",
+                    fontWeight: 700,
+                    bgcolor: "#2563eb",
+                    boxShadow: "none",
+                    "&:hover": {
+                      bgcolor: "#1d4ed8",
+                      boxShadow: "none",
+                    },
+                  }}
+                >
+                  {t("addNew")}
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -514,12 +596,6 @@ export default function ProductGroupsPage() {
                       <TableCell sx={{ fontWeight: 800 }}>
                         {t("description")}
                       </TableCell>
-                      <TableCell
-                        align="right"
-                        sx={{ fontWeight: 800 }}
-                      >
-                        {t("productCount")}
-                      </TableCell>
                       {canManage && (
                         <TableCell
                           align="right"
@@ -532,7 +608,7 @@ export default function ProductGroupsPage() {
                   </TableHead>
 
                   <TableBody>
-                    {filtered.map((group) => (
+                    {groups.map((group) => (
                       <TableRow
                         key={group.id}
                         hover
@@ -553,21 +629,6 @@ export default function ProductGroupsPage() {
                           >
                             {group.description ?? "-"}
                           </Typography>
-                        </TableCell>
-
-                        <TableCell align="right">
-                          <Chip
-                            size="small"
-                            label={
-                              group.productCount ?? 0
-                            }
-                            sx={{
-                              borderRadius: "8px",
-                              fontWeight: 700,
-                              bgcolor: "#eef2f7",
-                              color: "#475569",
-                            }}
-                          />
                         </TableCell>
 
                         {canManage && (
@@ -615,6 +676,140 @@ export default function ProductGroupsPage() {
                   </TableBody>
                 </Table>
               </TableContainer>
+
+              {total > rowsPerPage && (
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    gap: 0.5,
+                    py: 2,
+                    borderTop: "1px solid #eef1f6",
+                  }}
+                >
+                  <IconButton
+                    size="small"
+                    disabled={page <= 1}
+                    onClick={() => setPage(page - 1)}
+                    aria-label={t("previousPage")}
+                    sx={{
+                      color: "#64748b",
+                      "&.Mui-disabled": {
+                        color: "#cbd5e1",
+                      },
+                    }}
+                  >
+                    <ChevronLeftIcon fontSize="small" />
+                  </IconButton>
+
+                  {(() => {
+                    const pages: (
+                      | number
+                      | "..."
+                    )[] = [];
+
+                    if (totalPages <= 7) {
+                      for (
+                        let i = 1;
+                        i <= totalPages;
+                        i++
+                      ) {
+                        pages.push(i);
+                      }
+                    } else {
+                      pages.push(1);
+
+                      if (page > 3) {
+                        pages.push("...");
+                      }
+
+                      const start = Math.max(
+                        2,
+                        page - 1,
+                      );
+                      const end = Math.min(
+                        totalPages - 1,
+                        page + 1,
+                      );
+
+                      for (
+                        let i = start;
+                        i <= end;
+                        i++
+                      ) {
+                        pages.push(i);
+                      }
+
+                      if (page < totalPages - 2) {
+                        pages.push("...");
+                      }
+
+                      pages.push(totalPages);
+                    }
+
+                    return pages.map((p, idx) =>
+                      p === "..." ? (
+                        <Typography
+                          key={`ellipsis-${idx}`}
+                          sx={{
+                            px: 1,
+                            color: "#94a3b8",
+                            fontWeight: 700,
+                            fontSize: 14,
+                          }}
+                        >
+                          ...
+                        </Typography>
+                      ) : (
+                        <Button
+                          key={p}
+                          size="small"
+                          onClick={() => setPage(p)}
+                          sx={{
+                            minWidth: 32,
+                            height: 32,
+                            borderRadius: "50%",
+                            fontWeight: 700,
+                            fontSize: 14,
+                            color:
+                              p === page
+                                ? "#ffffff"
+                                : "#475569",
+                            bgcolor:
+                              p === page
+                                ? "#2563eb"
+                                : "transparent",
+                            "&:hover": {
+                              bgcolor:
+                                p === page
+                                  ? "#2563eb"
+                                  : "#f1f5f9",
+                            },
+                          }}
+                        >
+                          {p}
+                        </Button>
+                      ),
+                    );
+                  })()}
+
+                  <IconButton
+                    size="small"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage(page + 1)}
+                    aria-label={t("nextPage")}
+                    sx={{
+                      color: "#64748b",
+                      "&.Mui-disabled": {
+                        color: "#cbd5e1",
+                      },
+                    }}
+                  >
+                    <ChevronRightIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+              )}
             </CardContent>
           </Card>
         )}

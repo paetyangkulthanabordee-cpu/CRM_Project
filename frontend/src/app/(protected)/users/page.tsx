@@ -40,7 +40,9 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { withQuery } from "@/lib/listQuery";
 import { useApi } from "@/lib/swr";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
@@ -152,23 +154,42 @@ export default function UsersPage() {
     ),
   });
 
+  const canLoad =
+    ready &&
+    user &&
+    permissions?.administration === true;
+  const baseUrl = canLoad ? "/api/users" : null;
+
+  const [search, setSearch] = useState("");
+
+  /*
+   * ค้นจาก backend (debounce ก่อนยิง)
+   * base = ชุดเต็มไว้นับจำนวนตามสิทธิ์ ไม่กระทบตอนค้นหา
+   */
+  const debouncedSearch = useDebouncedValue(
+    search,
+    300,
+  );
+
+  const listUrl = useMemo(
+    () => withQuery(baseUrl, { search: debouncedSearch }),
+    [baseUrl, debouncedSearch],
+  );
+
+  const { data: allUsersData, mutate: reloadAll } =
+    useApi<UserListItem[]>(baseUrl);
+
   const {
     data: usersData,
     isLoading: loading,
     error: loadError,
     mutate: reloadUsers,
-  } = useApi<UserListItem[]>(
-    ready && user && permissions?.administration === true
-      ? "/api/users"
-      : null,
-  );
+  } = useApi<UserListItem[]>(listUrl);
 
   const users = useMemo(
-    () => usersData ?? [],
-    [usersData],
+    () => allUsersData ?? [],
+    [allUsersData],
   );
-
-  const [search, setSearch] = useState("");
 
   const [dialogOpen, setDialogOpen] = useState(
     false,
@@ -209,22 +230,13 @@ export default function UsersPage() {
     }
   }, [ready, user, router]);
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    if (!query) {
-      return users;
-    }
-
-    return users.filter(
-      (item) =>
-        item.name.toLowerCase().includes(query) ||
-        item.email
-          .toLowerCase()
-          .includes(query) ||
-        item.role.toLowerCase().includes(query),
-    );
-  }, [users, search]);
+  /*
+   * รายการที่ผ่านคำค้น — กรองจาก backend แล้ว
+   */
+  const filtered = useMemo(
+    () => usersData ?? [],
+    [usersData],
+  );
 
   const counts = useMemo(() => {
     const result: Record<UserRole, number> = {
@@ -326,7 +338,10 @@ export default function UsersPage() {
       }
 
       setDialogOpen(false);
-      await reloadUsers();
+      await Promise.all([
+        reloadUsers(),
+        reloadAll(),
+      ]);
     } catch (err) {
       setFormError(
         getErrorMessage(
@@ -356,7 +371,10 @@ export default function UsersPage() {
         "success",
       );
       setDeleteTarget(null);
-      await reloadUsers();
+      await Promise.all([
+        reloadUsers(),
+        reloadAll(),
+      ]);
     } catch (err) {
       showNotice(
         getErrorMessage(
@@ -393,6 +411,7 @@ export default function UsersPage() {
     permissions ?? {
       dashboard: true,
       customers: true,
+      salesPipeline: true,
       orderPipeline: true,
       documents: true,
       products: true,

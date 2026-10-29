@@ -34,14 +34,27 @@ export class Product {
   skuCode: string | null;
 
   /*
-   * ชื่อ property คงเดิม (productGroupId / productGroup) เพื่อไม่ให้ API contract
-   * ที่ frontend ใช้อยู่เปลี่ยน ส่วนคอลัมน์ในฐานข้อมูลถูก rename เป็น category_id
+   * หมวดหมู่สินค้า (ตาราง category)
+   * เดิมชื่อ property ว่า productGroupId ทั้งที่ชี้ category_id (legacy naming)
+   * จึงเปลี่ยนมาตั้งชื่อให้ตรงคอลัมน์จริง — ผลข้างเคียง: ชื่อ field ใน JSON เปลี่ยนด้วย
    */
   @Column({
     name: 'category_id',
     type: 'int',
   })
-  productGroupId: number;
+  categoryId: number;
+
+  @ManyToOne(() => Category)
+  @JoinColumn({
+    name: 'category_id',
+  })
+  category?: Category;
+
+  /*
+   * กลุ่มสินค้าไม่ได้ผูกกับสินค้าโดยตรงอีกต่อไป
+   * คอลัมน์ product_group_id ถูกย้ายไปที่ category (migration 021)
+   * สืบค้นกลุ่มผ่าน category.productGroup แทน
+   */
 
   @Column({
     type: 'text',
@@ -63,12 +76,6 @@ export class Product {
     type: 'int',
   })
   productUnitId: number;
-
-  @ManyToOne(() => Category)
-  @JoinColumn({
-    name: 'category_id',
-  })
-  productGroup?: Category;
 
   @ManyToOne(() => ProductUnit)
   @JoinColumn({

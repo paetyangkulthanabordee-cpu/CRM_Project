@@ -13,7 +13,13 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/product-types",
-        destination: "/product-groups",
+        destination: "/categories",
+        permanent: false,
+      },
+      {
+        // หน้าบอร์ดลูกค้าเปลี่ยนชื่อจาก Sales Pipeline เป็น Contact Pipeline
+        source: "/sales-pipeline",
+        destination: "/contact-pipeline",
         permanent: false,
       },
     ];

@@ -10,6 +10,12 @@ export interface User {
 export interface Permissions {
   dashboard: boolean;
   customers: boolean;
+
+  /*
+   * salesPipeline = บอร์ด Contact (ตาราง pipeline_stages)
+   * orderPipeline = บอร์ดใบสั่งซื้อ (ตาราง order_pipeline)
+   */
+  salesPipeline: boolean;
   orderPipeline: boolean;
   documents: boolean;
   products: boolean;

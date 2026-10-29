@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -9,14 +9,11 @@ import { useTranslations } from "next-intl";
 import { z } from "zod";
 
 import AddIcon from "@mui/icons-material/Add";
-import CategoryIcon from "@mui/icons-material/Category";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import Inventory2Icon from "@mui/icons-material/Inventory2";
-import PaidIcon from "@mui/icons-material/Paid";
 import SearchIcon from "@mui/icons-material/Search";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
@@ -49,13 +46,14 @@ import Typography from "@mui/material/Typography";
 
 import { api, getErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/swr";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
 import type {
+  Category,
   Product,
-  ProductGroup,
-  ProductStats,
+  ProductGroupList,
   ProductUnit,
 } from "@/lib/types";
 
@@ -63,6 +61,7 @@ interface ProductForm {
   name: string;
   skuCode: string;
   productGroupId: string;
+  categoryId: string;
   productUnitId: string;
   price: string;
   description: string;
@@ -72,6 +71,7 @@ const emptyForm: ProductForm = {
   name: "",
   skuCode: "",
   productGroupId: "",
+  categoryId: "",
   productUnitId: "",
   price: "",
   description: "",
@@ -95,6 +95,9 @@ export default function ProductsPage() {
     productGroupId: z
       .string()
       .min(1, t("groupRequired")),
+    categoryId: z
+      .string()
+      .min(1, t("categoryRequired")),
     productUnitId: z
       .string()
       .min(1, t("unitRequired")),
@@ -109,9 +112,20 @@ export default function ProductsPage() {
   });
 
   const [search, setSearch] = useState("");
-  const [groupId, setGroupId] = useState("");
+  const [categoryFilter, setCategoryFilter] =
+    useState("");
+  const [groupFilter, setGroupFilter] = useState("");
   const [page, setPage] = useState(1);
   const rowsPerPage = 10;
+
+  /*
+   * หน่วงคำค้นก่อนยิง API กันทุก keystroke = 1 request
+   * ช่องค้นหาใน UI ยังคงใช้ค่าสดตามเดิม
+   */
+  const debouncedSearch = useDebouncedValue(
+    search,
+    300,
+  );
 
   const listUrl = useMemo(() => {
     if (!ready || !user) return null;
@@ -120,16 +134,28 @@ export default function ProductsPage() {
     params.set("limit", String(rowsPerPage));
     params.set("page", String(page));
 
-    if (search.trim()) {
-      params.set("search", search.trim());
+    if (debouncedSearch.trim()) {
+      params.set("search", debouncedSearch.trim());
     }
 
-    if (groupId) {
-      params.set("groupId", groupId);
+    if (categoryFilter) {
+      params.set("categoryId", categoryFilter);
+    }
+
+    if (groupFilter) {
+      params.set("productGroupId", groupFilter);
     }
 
     return `/api/products?${params.toString()}`;
-  }, [ready, user, page, search, groupId, rowsPerPage]);
+  }, [
+    ready,
+    user,
+    page,
+    debouncedSearch,
+    categoryFilter,
+    groupFilter,
+    rowsPerPage,
+  ]);
 
   const {
     data: listData,
@@ -137,12 +163,15 @@ export default function ProductsPage() {
     error: loadError,
     mutate: reloadProducts,
   } = useApi<{ data: Product[]; total: number }>(listUrl);
-  const { data: statsData } = useApi<ProductStats>(
-    ready && user ? "/api/products/stats" : null,
-  );
-  const { data: groupsData } = useApi<ProductGroup[]>(
+  const { data: categoriesData } = useApi<Category[]>(
     ready && user ? "/api/products/groups" : null,
   );
+  const { data: productGroupsData } =
+    useApi<ProductGroupList>(
+      ready && user
+        ? "/api/product-groups?limit=100"
+        : null,
+    );
   const { data: unitsData } = useApi<ProductUnit[]>(
     ready && user ? "/api/products/units" : null,
   );
@@ -151,8 +180,8 @@ export default function ProductsPage() {
     () => listData?.data ?? [],
     [listData],
   );
-  const stats = statsData ?? null;
-  const groups = groupsData ?? [];
+  const categories = categoriesData ?? [];
+  const productGroups = productGroupsData?.data ?? [];
   const units = unitsData ?? [];
 
   const total = listData?.total ?? 0;
@@ -166,6 +195,22 @@ export default function ProductsPage() {
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  /*
+   * หมวดหมู่สำหรับ dropdown ในฟอร์ม
+   * แสดงเฉพาะหมวดของกลุ่มที่เลือกไว้ (เลือกกลุ่มก่อนแล้วจึงเลือกหมวด)
+   */
+  const formCategories = useMemo(() => {
+    if (!form.productGroupId) {
+      return [];
+    }
+
+    const groupId = Number(form.productGroupId);
+
+    return categories.filter(
+      (category) => category.productGroupId === groupId,
+    );
+  }, [categories, form.productGroupId]);
 
   const [viewTarget, setViewTarget] =
     useState<Product | null>(null);
@@ -197,11 +242,14 @@ export default function ProductsPage() {
   }, [ready, user, router]);
 
   const hasFilter =
-    Boolean(search.trim()) || Boolean(groupId);
+    Boolean(search.trim()) ||
+    Boolean(categoryFilter) ||
+    Boolean(groupFilter);
 
   function resetFilters() {
     setSearch("");
-    setGroupId("");
+    setCategoryFilter("");
+    setGroupFilter("");
     setPage(1);
   }
 
@@ -221,7 +269,14 @@ export default function ProductsPage() {
     setForm({
       name: product.name,
       skuCode: product.skuCode ?? "",
-      productGroupId: String(product.productGroupId),
+      /*
+       * กลุ่มสินค้าสืบค้นผ่านหมวดหมู่ของสินค้า
+       * (product ไม่มี productGroupId โดยตรงแล้ว)
+       */
+      productGroupId: product.category?.productGroup?.id
+        ? String(product.category.productGroup.id)
+        : "",
+      categoryId: String(product.categoryId),
       productUnitId: String(product.productUnitId),
       price: String(product.price),
       description: product.description ?? "",
@@ -262,8 +317,8 @@ export default function ProductsPage() {
         await api.patch(`/products/${editing.id}`, {
           name: result.data.name,
           skuCode: result.data.skuCode || null,
-          productGroupId: Number(
-            result.data.productGroupId,
+          categoryId: Number(
+            result.data.categoryId,
           ),
           productUnitId: Number(
             result.data.productUnitId,
@@ -278,8 +333,8 @@ export default function ProductsPage() {
         await api.post("/api/products", {
           name: result.data.name,
           skuCode: result.data.skuCode || undefined,
-          productGroupId: Number(
-            result.data.productGroupId,
+          categoryId: Number(
+            result.data.categoryId,
           ),
           productUnitId: Number(
             result.data.productUnitId,
@@ -329,11 +384,19 @@ export default function ProductsPage() {
     }
   }
 
-  function groupName(id: number) {
+  function categoryName(id: number) {
     return (
-      groups.find((item) => item.id === id)?.name ??
-      "-"
+      categories.find((item) => item.id === id)
+        ?.name ?? "-"
     );
+  }
+
+  /*
+   * กลุ่มสินค้าสืบค้นผ่านหมวดหมู่ของสินค้า
+   * (product.category.productGroup ที่ backend ส่งมา)
+   */
+  function productGroupName(product: Product) {
+    return product.category?.productGroup?.name ?? "-";
   }
 
   function unitName(id: number) {
@@ -358,36 +421,6 @@ export default function ProductsPage() {
       </Box>
     );
   }
-
-  const statCards: {
-    icon: ReactNode;
-    color: string;
-    label: string;
-    value: number;
-    sub: string;
-  }[] = [
-    {
-      icon: <Inventory2Icon />,
-      color: "#2563eb",
-      label: t("totalProducts"),
-      value: stats?.totalProducts ?? 0,
-      sub: t("entries"),
-    },
-    {
-      icon: <PaidIcon />,
-      color: "#16a34a",
-      label: t("totalValue"),
-      value: stats?.totalValue ?? 0,
-      sub: t("totalValueSub"),
-    },
-    {
-      icon: <CategoryIcon />,
-      color: "#f97316",
-      label: t("groupCount"),
-      value: stats?.groupCount ?? 0,
-      sub: "",
-    },
-  ];
 
   return (
     <Box
@@ -474,106 +507,6 @@ export default function ProductsPage() {
           </Button>
         </Box>
 
-        {/* STATS */}
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(3, 1fr)",
-            },
-            gap: 2,
-            mb: 3,
-          }}
-        >
-          {statCards.map((card) => (
-            <Card
-              key={card.label}
-              sx={{
-                border: "1px solid #eceff4",
-                borderRadius: "16px",
-                bgcolor: "#ffffff",
-              }}
-            >
-              <CardContent
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 2,
-                  "&:last-child": { pb: 2.5 },
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 3,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    bgcolor: `${card.color}14`,
-                    color: card.color,
-                    flexShrink: 0,
-                  }}
-                >
-                  {card.icon}
-                </Box>
-
-                <Box sx={{ minWidth: 0 }}>
-                  <Typography
-                    component="div"
-                    variant="body2"
-                    sx={{ color: "#64748b" }}
-                  >
-                    {card.label}
-                  </Typography>
-
-                  <Typography
-                    component="div"
-                    variant="h5"
-                    sx={{
-                      fontWeight: 800,
-                      color: "#0f172a",
-                      lineHeight: 1.3,
-                    }}
-                  >
-                    {loading ? (
-                      <Skeleton
-                        width={70}
-                        height={34}
-                      />
-                    ) : card.label ===
-                      t("totalValue") ? (
-                      formatBaht(card.value)
-                    ) : (
-                      <>
-                        {card.value}
-                        {card.sub && (
-                          <Typography
-                            component="span"
-                            variant="body2"
-                            sx={{
-                              ml: 0.75,
-                              fontWeight: 600,
-                              color: "#64748b",
-                            }}
-                          >
-                            {card.sub}
-                          </Typography>
-                        )}
-                      </>
-                    )}
-                  </Typography>
-
-                  {loading && (
-                    <Skeleton width={100} />
-                  )}
-                </Box>
-              </CardContent>
-            </Card>
-          ))}
-        </Box>
-
         {/* TOOLBAR */}
         <Card
           sx={{
@@ -640,11 +573,13 @@ export default function ProductsPage() {
           <TextField
             select
             size="small"
-            value={groupId || "all"}
+            value={groupFilter || "all"}
             onChange={(event) => {
               const value = String(event.target.value);
 
-              setGroupId(value === "all" ? "" : value);
+              setGroupFilter(
+                value === "all" ? "" : value,
+              );
               setPage(1);
             }}
             sx={{ minWidth: 190 }}
@@ -661,12 +596,48 @@ export default function ProductsPage() {
             <MenuItem value="all">
               {t("allGroups")}
             </MenuItem>
-            {groups.map((group) => (
+            {productGroups.map((group) => (
               <MenuItem
                 key={group.id}
                 value={String(group.id)}
               >
                 {group.name}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          <TextField
+            select
+            size="small"
+            value={categoryFilter || "all"}
+            onChange={(event) => {
+              const value = String(event.target.value);
+
+              setCategoryFilter(
+                value === "all" ? "" : value,
+              );
+              setPage(1);
+            }}
+            sx={{ minWidth: 190 }}
+            slotProps={{
+              input: {
+                sx: {
+                  bgcolor: "#f8fafc",
+                  borderRadius: "10px",
+                  border: "1px solid #e2e8f0",
+                },
+              },
+            }}
+          >
+            <MenuItem value="all">
+              {t("allCategories")}
+            </MenuItem>
+            {categories.map((category) => (
+              <MenuItem
+                key={category.id}
+                value={String(category.id)}
+              >
+                {category.name}
               </MenuItem>
             ))}
           </TextField>
@@ -849,6 +820,9 @@ export default function ProductsPage() {
                         {t("group")}
                       </TableCell>
                       <TableCell sx={{ fontWeight: 800 }}>
+                        {t("category")}
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 800 }}>
                         {t("unit")}
                       </TableCell>
                       <TableCell
@@ -928,8 +902,23 @@ export default function ProductsPage() {
                         <TableCell>
                           <Chip
                             size="small"
-                            label={groupName(
-                              product.productGroupId,
+                            label={productGroupName(
+                              product,
+                            )}
+                            sx={{
+                              borderRadius: "8px",
+                              fontWeight: 700,
+                              bgcolor: "#eef2f7",
+                              color: "#475569",
+                            }}
+                          />
+                        </TableCell>
+
+                        <TableCell>
+                          <Chip
+                            size="small"
+                            label={categoryName(
+                              product.categoryId,
                             )}
                             sx={{
                               borderRadius: "8px",
@@ -1204,20 +1193,23 @@ export default function ProductsPage() {
                     handleFormChange({
                       productGroupId:
                         event.target.value,
+                      /* เปลี่ยนกลุ่ม = ล้างหมวดของกลุ่มเก่าทิ้ง */
+                      categoryId: "",
                     })
                   }
+                  helperText={t("selectGroupFirst")}
                   required
                   fullWidth
                 >
                   <MenuItem value="">
                     {t("selectGroup")}
                   </MenuItem>
-                  {groups.length === 0 && (
+                  {productGroups.length === 0 && (
                     <MenuItem disabled>
                       {t("noGroups")}
                     </MenuItem>
                   )}
-                  {groups.map((group) => (
+                  {productGroups.map((group) => (
                     <MenuItem
                       key={group.id}
                       value={String(group.id)}
@@ -1226,6 +1218,43 @@ export default function ProductsPage() {
                     </MenuItem>
                   ))}
                 </TextField>
+
+                {/*
+                 * ช่องหมวดหมู่แสดงเฉพาะหลังเลือกกลุ่มแล้ว
+                 * เพื่อให้ผู้ใช้เลือกลำดับ: กลุ่ม → หมวดหมู่
+                 */}
+                {form.productGroupId && (
+                  <TextField
+                    select
+                    label={t("categoryLabel")}
+                    value={form.categoryId}
+                    onChange={(event) =>
+                      handleFormChange({
+                        categoryId:
+                          event.target.value,
+                      })
+                    }
+                    required
+                    fullWidth
+                  >
+                    <MenuItem value="">
+                      {t("selectCategory")}
+                    </MenuItem>
+                    {formCategories.length === 0 && (
+                      <MenuItem disabled>
+                        {t("noCategories")}
+                      </MenuItem>
+                    )}
+                    {formCategories.map((category) => (
+                      <MenuItem
+                        key={category.id}
+                        value={String(category.id)}
+                      >
+                        {category.name}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                )}
 
                 <TextField
                   select
@@ -1412,8 +1441,28 @@ export default function ProductsPage() {
                         color: "#1a2233",
                       }}
                     >
-                      {groupName(
-                        viewTarget.productGroupId,
+                      {productGroupName(
+                        viewTarget,
+                      )}
+                    </Typography>
+                  </Box>
+
+                  <Box>
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "#94a3b8" }}
+                    >
+                      {t("category")}
+                    </Typography>
+                    <Typography
+                      variant="body1"
+                      sx={{
+                        fontWeight: 700,
+                        color: "#1a2233",
+                      }}
+                    >
+                      {categoryName(
+                        viewTarget.categoryId,
                       )}
                     </Typography>
                   </Box>

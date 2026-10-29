@@ -9,12 +9,15 @@ import { usePathname, useRouter } from "next/navigation";
 
 import BarChartIcon from "@mui/icons-material/BarChart";
 import CategoryIcon from "@mui/icons-material/Category";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
+import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import GridViewIcon from "@mui/icons-material/GridView";
 import HistoryIcon from "@mui/icons-material/History";
 import Inventory2Icon from "@mui/icons-material/Inventory2";
 import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
+import RuleIcon from "@mui/icons-material/Rule";
 import SettingsIcon from "@mui/icons-material/Settings";
 import ShieldIcon from "@mui/icons-material/Shield";
 import TuneIcon from "@mui/icons-material/Tune";
@@ -153,11 +156,18 @@ export default function DashboardSidebar({
       icon: <Inventory2Icon fontSize="small" />,
     },
     {
+      kind: "link",
+      href: "/document-types",
+      label: t("documentTypes"),
+      icon: <DescriptionRoundedIcon fontSize="small" />,
+    },
+    {
       kind: "group",
       key: "productManagement",
       label: t("productManagement"),
       icon: <CategoryIcon fontSize="small" />,
       matches: (path) =>
+        path.startsWith("/categories") ||
         path.startsWith("/product-groups") ||
         path.startsWith("/product-units"),
       children: [
@@ -165,6 +175,14 @@ export default function DashboardSidebar({
           kind: "link",
           href: "/product-groups",
           label: t("productGroups"),
+          icon: (
+            <FormatListBulletedIcon fontSize="small" />
+          ),
+        },
+        {
+          kind: "link",
+          href: "/categories",
+          label: t("categories"),
           icon: <CategoryIcon fontSize="small" />,
         },
         {
@@ -211,6 +229,7 @@ export default function DashboardSidebar({
         path.startsWith("/permissions") ||
         path.startsWith("/users") ||
         path.startsWith("/manage-pipeline") ||
+        path.startsWith("/workflow-rules") ||
         path.startsWith("/audit-logs"),
       children: [
         {
@@ -233,6 +252,12 @@ export default function DashboardSidebar({
         },
         {
           kind: "link",
+          href: "/workflow-rules",
+          label: t("workflowRules"),
+          icon: <RuleIcon fontSize="small" />,
+        },
+        {
+          kind: "link",
           href: "/audit-logs",
           label: t("auditLogs"),
           icon: <HistoryIcon fontSize="small" />,
@@ -243,6 +268,14 @@ export default function DashboardSidebar({
 
   function isGroupVisible(entry: NavEntry) {
     if (entry.kind === "link") {
+      /*
+       * หน้าจัดการประเภทเอกสาร = งาน Administration
+       * (ปุ่มเพิ่ม/แก้/ลบฝั่ง backend บังคับสิทธิ์เดียวกัน)
+       */
+      if (entry.href === "/document-types") {
+        return permissions.administration;
+      }
+
       return true;
     }
 
@@ -264,6 +297,10 @@ export default function DashboardSidebar({
       }
 
       if (child.href === "/manage-pipeline") {
+        return permissions.administration;
+      }
+
+      if (child.href === "/workflow-rules") {
         return permissions.administration;
       }
 
@@ -614,7 +651,7 @@ export default function DashboardSidebar({
 
   const sidebarSx = {
     width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH,
-    minHeight: "100vh",
+    height: "100vh",
     flexShrink: 0,
     borderRight: "1px solid #e5e7eb",
     bgcolor: "#ffffff",
@@ -623,6 +660,16 @@ export default function DashboardSidebar({
     boxSizing: "border-box",
     transition: "width 200ms ease",
     overflowX: "hidden",
+    overflowY: "auto",
+    /*
+     * เลื่อนได้แต่ซ่อนแถบ scrollbar ถาวร
+     * (Firefox ใช้ scrollbarWidth / WebKit ใช้ ::-webkit-scrollbar)
+     */
+    scrollbarWidth: "none",
+    "&::-webkit-scrollbar": {
+      display: "none",
+      width: 0,
+    },
   };
 
   return (
@@ -651,7 +698,15 @@ export default function DashboardSidebar({
           display: { xs: "block", md: "none" },
           "& .MuiDrawer-paper": {
             width: SIDEBAR_WIDTH,
+            maxHeight: "100vh",
             boxSizing: "border-box",
+            overflowX: "hidden",
+            overflowY: "auto",
+            scrollbarWidth: "none",
+            "&::-webkit-scrollbar": {
+              display: "none",
+              width: 0,
+            },
           },
         }}
       >

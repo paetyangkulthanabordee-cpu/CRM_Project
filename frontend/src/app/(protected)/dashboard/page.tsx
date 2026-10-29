@@ -30,8 +30,11 @@ import type {
 
 import type { DashboardData } from "@/lib/types";
 
+import type { OrderPipelineStage } from "@/lib/types";
+
 export default function DashboardPage() {
   const t = useTranslations("dashboard");
+  const tCommon = useTranslations("common");
   const locale = useLocale();
   const router = useRouter();
   const { user, permissions, ready } = useSession();
@@ -43,6 +46,18 @@ export default function DashboardPage() {
     mutate: refreshDashboard,
   } = useApi<DashboardData>(
     ready && user ? "/api/dashboard" : null,
+  );
+
+  /*
+   * Funnel ของ Order Pipeline นับจำนวนใบสั่งซื้อ
+   * ตามคอลัมน์ในตาราง order_pipeline
+   * ไม่ใช่จำนวนลูกค้าตามสถานะของบอร์ด Contact Pipeline
+   */
+  const {
+    data: orderStages,
+    isLoading: orderStagesLoading,
+  } = useApi<OrderPipelineStage[]>(
+    ready && user ? "/api/order-pipeline" : null,
   );
 
   useEffect(() => {
@@ -72,6 +87,7 @@ export default function DashboardPage() {
     permissions ?? {
       dashboard: true,
       customers: true,
+      salesPipeline: true,
       orderPipeline: true,
       documents: true,
       products: true,
@@ -86,9 +102,21 @@ export default function DashboardPage() {
     };
 
   const kpis = dashboardData?.kpis;
-  const stages = dashboardData?.stages ?? [];
   const recentCustomers =
     dashboardData?.recentCustomers ?? [];
+
+  /*
+   * คอลัมน์ของท่อออเดอร์ เรียงตาม position จาก DB
+   */
+  const funnelStages = (orderStages ?? []).map(
+    (stage, index) => ({
+      key: stage.stageId,
+      title: `${String(index + 1).padStart(2, "0")}. ${stage.label.toUpperCase()}`,
+      label: stage.label,
+      color: stage.color,
+      count: stage.issueOrderCount,
+    }),
+  );
 
   const kpiCards = [
     {
@@ -448,7 +476,7 @@ export default function DashboardPage() {
                   mt: 3,
                 }}
               >
-                {showSkeleton
+                {showSkeleton || orderStagesLoading
                   ? Array.from({
                       length: 6,
                     }).map((_, index) => (
@@ -480,9 +508,25 @@ export default function DashboardPage() {
                         />
                       </Box>
                     ))
-                  : stages.map((stage, index) => {
+                  : funnelStages.length === 0 ? (
+                    <Box
+                      sx={{
+                        gridColumn: "1 / -1",
+                        py: 4,
+                        textAlign: "center",
+                      }}
+                    >
+                      <Typography
+                        component="div"
+                        variant="body2"
+                        color="text.secondary"
+                      >
+                        {tCommon("noData")}
+                      </Typography>
+                    </Box>
+                  ) : funnelStages.map((stage, index) => {
                   const previous =
-                    stages[index - 1];
+                    funnelStages[index - 1];
 
                   const conversion =
                     previous &&
@@ -496,7 +540,7 @@ export default function DashboardPage() {
 
                   return (
                     <Box
-                      key={stage.stage}
+                      key={stage.key}
                       sx={{
                         p: 2,
                         border:
@@ -514,7 +558,7 @@ export default function DashboardPage() {
                           fontWeight: 700,
                         }}
                       >
-                        {stage.stage}
+                        {stage.title}
                       </Typography>
 
                       <Typography
@@ -534,11 +578,23 @@ export default function DashboardPage() {
                         color="text.secondary"
                         sx={{
                           mt: 0.5,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent:
+                            "center",
+                          gap: 0.75,
                         }}
                       >
-                        {STATUS_LABELS[
-                          stage.status
-                        ] ?? stage.status}
+                        <Box
+                          sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            bgcolor: stage.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        {stage.label}
                       </Typography>
 
                       <Divider sx={{ my: 1.5 }} />

@@ -31,6 +31,7 @@ import type { UserRole } from "@/lib/auth";
 type ModuleKey =
   | "dashboard"
   | "customers"
+  | "salesPipeline"
   | "orderPipeline"
   | "documents"
   | "products"
@@ -79,6 +80,7 @@ function toSessionPermissions(
   return {
     dashboard: row.dashboard === true,
     customers: row.customers === true,
+    salesPipeline: row.salesPipeline === true,
     orderPipeline: row.orderPipeline === true,
     documents: row.documents === true,
     products: row.products === true,
@@ -109,6 +111,12 @@ export default function PermissionsPage() {
         label: t("modules.customers"),
         labelEn: "Customer Database",
         hint: t("moduleHints.customers"),
+      },
+      {
+        key: "salesPipeline",
+        label: t("modules.salesPipeline"),
+        labelEn: "Contact Pipeline",
+        hint: t("moduleHints.salesPipeline"),
       },
       {
         key: "orderPipeline",

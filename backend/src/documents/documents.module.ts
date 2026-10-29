@@ -1,24 +1,14 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { CustomersModule } from '../customers/customers.module.js';
-import { Customer } from '../customers/entities/customer.entity.js';
-import { User } from '../users/entities/user.entity.js';
 import { DocumentsController } from './documents.controller.js';
 import { DocumentsService } from './documents.service.js';
-import { DocumentRecord } from './entities/document.entity.js';
-import { DocumentSequence } from './entities/document-sequence.entity.js';
 
+/*
+ * เดิม register DocumentRecord/DocumentSequence + CustomersModule
+ * หลัง migration 024 (drop ตาราง documents) service ไม่ query ตารางเหล่านั้นแล้ว
+ * จึงเหลือแค่ controller + service ตัว stub ให้หน้าเดิมไม่พัง
+ */
 @Module({
-  imports: [
-    CustomersModule,
-    TypeOrmModule.forFeature([
-      DocumentRecord,
-      DocumentSequence,
-      Customer,
-      User,
-    ]),
-  ],
   controllers: [DocumentsController],
   providers: [DocumentsService],
   exports: [DocumentsService],

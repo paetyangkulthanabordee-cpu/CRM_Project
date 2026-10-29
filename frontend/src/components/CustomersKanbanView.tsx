@@ -5,8 +5,6 @@ import { useCallback } from "react";
 import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
-import Chip from "@mui/material/Chip";
-import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import CustomersKanbanBoard from "@/components/CustomersKanbanBoard";
@@ -36,12 +34,6 @@ export interface CustomersKanbanViewProps {
   emptyColumnLabel: string;
   unassignedLabel: string;
 }
-
-const DOC_CHIPS = [
-  { label: "QT", key: "quotation", color: "#2563eb" },
-  { label: "IV", key: "invoice", color: "#f97316" },
-  { label: "RC", key: "receipt", color: "#16a34a" },
-] as const;
 
 function CustomerKanbanCard({
   customer,
@@ -119,38 +111,6 @@ function CustomerKanbanCard({
         {" · "}
         {customer.phone || "-"}
       </Typography>
-
-      <Stack
-        direction="row"
-        spacing={0.75}
-        sx={{ mt: 1.25 }}
-      >
-        {DOC_CHIPS.map((chip) => {
-          const count =
-            summary[chip.key].count;
-
-          return (
-            <Chip
-              key={chip.label}
-              size="small"
-              label={`${chip.label} ${count}`}
-              sx={{
-                fontWeight: 800,
-                fontSize: 11,
-                borderRadius: "7px",
-                bgcolor:
-                  count > 0
-                    ? `${chip.color}14`
-                    : "#f4f6f9",
-                color:
-                  count > 0
-                    ? chip.color
-                    : "#94a3b8",
-              }}
-            />
-          );
-        })}
-      </Stack>
 
       <Box
         sx={{
@@ -269,7 +229,7 @@ export default function CustomersKanbanView({
       onStageChange={onStageChange}
       renderCard={renderCard}
       emptyColumnLabel={emptyColumnLabel}
-      cardHeight={214}
+      cardHeight={180}
       columnWidth={300}
     />
   );

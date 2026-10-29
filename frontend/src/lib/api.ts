@@ -66,3 +66,34 @@ export function getErrorMessage(
 
   return fallback;
 }
+
+/*
+ * อ่าน response body ของ error ที่ backend แนบ field เพิ่มมา
+ * เช่น 400 ตอนถูก Workflow Rule บล็อกการย้ายขั้นตอน
+ * ที่มี errorCode + unmetRules นอกเหนือจาก message
+ */
+export function getErrorPayload<T>(
+  error: unknown,
+): T | undefined {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data;
+
+    if (data && typeof data === "object") {
+      return data as T;
+    }
+  }
+
+  return undefined;
+}
+
+/*
+ * รหัสข้อผิดพลาดสั้น ๆ ที่ backend กำหนด (เช่น WORKFLOW_RULE_BLOCKED)
+ * ไม่ใช่ทุก error จะมี -> คืน undefined เมื่อไม่พบ
+ */
+export function getErrorCode(error: unknown): string | undefined {
+  const code = getErrorPayload<{ errorCode?: unknown }>(
+    error,
+  )?.errorCode;
+
+  return typeof code === "string" ? code : undefined;
+}

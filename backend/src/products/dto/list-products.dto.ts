@@ -11,7 +11,11 @@ export class ListProductsDto {
 
   @IsOptional()
   @IsInt()
-  groupId?: number;
+  categoryId?: number;
+
+  @IsOptional()
+  @IsInt()
+  productGroupId?: number;
 
   @IsOptional()
   @IsInt()

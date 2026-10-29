@@ -7,12 +7,14 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../common/decorators/current-user.decorator.js';
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
+import { ListUsersDto } from './dto/list-users.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { UsersService } from './users.service.js';
 import type { UserListItem } from './users.service.js';
@@ -25,8 +27,10 @@ export class UsersController {
   ) {}
 
   @Get()
-  findAll(): Promise<UserListItem[]> {
-    return this.usersService.findAll();
+  findAll(
+    @Query() query: ListUsersDto,
+  ): Promise<UserListItem[]> {
+    return this.usersService.findAll(query);
   }
 
   @Post()

@@ -22,7 +22,7 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsInt()
-  productGroupId?: number;
+  categoryId?: number;
 
   @IsOptional()
   @IsString()

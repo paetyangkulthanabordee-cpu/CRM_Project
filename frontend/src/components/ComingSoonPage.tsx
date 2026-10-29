@@ -73,6 +73,7 @@ export default function ComingSoonPage({
           permissions ?? {
             dashboard: true,
             customers: true,
+            salesPipeline: true,
             orderPipeline: true,
             documents: true,
             products: true,

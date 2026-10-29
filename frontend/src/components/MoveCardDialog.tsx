@@ -35,7 +35,7 @@ export default function MoveCardDialog({
   onClose,
   onMove,
 }: Props) {
-  const t = useTranslations("salesPipeline");
+  const t = useTranslations("contactPipeline");
 
   const [targetStage, setTargetStage] = useState("");
   const [position, setPosition] = useState(1);

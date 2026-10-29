@@ -20,7 +20,7 @@ export class CreateProductDto {
   skuCode?: string;
 
   @IsInt()
-  productGroupId: number;
+  categoryId: number;
 
   @IsOptional()
   @IsString()

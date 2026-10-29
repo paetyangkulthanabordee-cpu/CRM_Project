@@ -42,10 +42,11 @@ export class CustomersService {
       builder.andWhere('customer.isActive = true');
     }
 
-    if (query.status) {
-      builder.andWhere('customer.status = :status', {
-        status: query.status,
-      });
+    if (query.status && query.status.length > 0) {
+      builder.andWhere(
+        'customer.status IN (:...status)',
+        { status: query.status },
+      );
     }
 
     if (query.search) {
@@ -59,6 +60,53 @@ export class CustomersService {
       builder.andWhere('customer.createdAt >= :dateFrom', {
         dateFrom: query.dateFrom,
       });
+    }
+
+    /*
+     * dateTo แบบ YYYY-MM-DD = รวมทั้งวันนั้น (ใช้ถัดจากวันสิ้นวัน)
+     * แบบ ISO datetime = ตรงเวลานั้นพอดี
+     */
+    if (query.dateTo) {
+      if (query.dateTo.length === 10) {
+        const nextDay = new Date(
+          `${query.dateTo}T00:00:00Z`,
+        );
+        nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+
+        builder.andWhere(
+          'customer.createdAt < :dateTo',
+          { dateTo: nextDay.toISOString() },
+        );
+      } else {
+        builder.andWhere(
+          'customer.createdAt <= :dateTo',
+          { dateTo: query.dateTo },
+        );
+      }
+    }
+
+    /*
+     * กรองผู้รับผิดชอบ
+     * เลือกหลายคน = IN หรือรวมยังไม่ระบุถ้าเปิด unassigned
+     */
+    const assignedIds = query.assignedId ?? [];
+    const includeUnassigned =
+      query.unassigned === true;
+
+    if (assignedIds.length > 0 && includeUnassigned) {
+      builder.andWhere(
+        '(customer.assignedId IN (:...assignedIds) OR customer.assignedId IS NULL)',
+        { assignedIds },
+      );
+    } else if (assignedIds.length > 0) {
+      builder.andWhere(
+        'customer.assignedId IN (:...assignedIds)',
+        { assignedIds },
+      );
+    } else if (includeUnassigned) {
+      builder.andWhere(
+        'customer.assignedId IS NULL',
+      );
     }
 
     const page = Math.max(1, Number(query.page) || 1);
@@ -133,14 +181,21 @@ export class CustomersService {
     const executor =
       manager ?? this.customersRepository.manager;
 
+    /*
+     * ที่มาของ "ใบเสร็จ" เปลี่ยนไปหลัง migration 024
+     * เดิม: ตาราง documents (doc_type = 'receipt')
+     * ตอนนี้: ไฟล์แนบใบสั่งซื้อที่ระบุประเภทเป็นใบเสร็จ
+     */
     const rows: { purchaseCount: number }[] =
       await executor.query(
         `UPDATE customers c
          SET purchase_count = (
            SELECT COUNT(*)::int
-           FROM documents d
-           WHERE d.customer_id = c.customer_id
-             AND d.doc_type = 'receipt'
+           FROM issue_order_attachment a
+           INNER JOIN issue_order o ON o.id = a.issue_order_id
+           INNER JOIN document_type dt ON dt.id = a.document_type_id
+           WHERE o.customer_id = c.customer_id
+             AND dt.document_type = 'receipt'
          )
          WHERE c.customer_id = $1
          RETURNING purchase_count`,
@@ -159,9 +214,11 @@ export class CustomersService {
       `UPDATE customers c
        SET purchase_count = (
          SELECT COUNT(*)::int
-         FROM documents d
-         WHERE d.customer_id = c.customer_id
-           AND d.doc_type = 'receipt'
+         FROM issue_order_attachment a
+         INNER JOIN issue_order o ON o.id = a.issue_order_id
+         INNER JOIN document_type dt ON dt.id = a.document_type_id
+         WHERE o.customer_id = c.customer_id
+           AND dt.document_type = 'receipt'
        )
        WHERE c.customer_id = ANY($1::int[])`,
       [customerIds],

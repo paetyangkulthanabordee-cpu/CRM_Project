@@ -56,7 +56,7 @@ export default function AddCardDialog({
     note: string;
   }) => void;
 }) {
-  const t = useTranslations("salesPipeline");
+  const t = useTranslations("contactPipeline");
 
   const [customerId, setCustomerId] = useState<number | "">("");
   const [productIds, setProductIds] = useState<number[]>([]);

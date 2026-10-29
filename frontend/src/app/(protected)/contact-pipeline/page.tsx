@@ -45,7 +45,9 @@ import CustomerDetailDialog, {
   initials,
 } from "@/components/CustomerDetailDialog";
 import { api, getErrorMessage } from "@/lib/api";
+import { withQuery } from "@/lib/listQuery";
 import { useApi } from "@/lib/swr";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
@@ -144,12 +146,6 @@ function bucketRange(bucket: DateBucket): DateRange {
   };
 }
 
-const startOfDay = (value: string) =>
-  new Date(`${value}T00:00:00`).getTime();
-
-const endOfDay = (value: string) =>
-  new Date(`${value}T23:59:59.999`).getTime();
-
 /* =====================================================
    CARD
    ====================================================== */
@@ -165,7 +161,7 @@ function PipelineCard({
   ghost?: boolean;
   onOpen: (customer: Customer) => void;
 }) {
-  const t = useTranslations("salesPipeline");
+  const t = useTranslations("contactPipeline");
 
   const assigned =
     customer.assignedUser?.name ?? null;
@@ -319,8 +315,8 @@ function PipelineCard({
    PAGE
    ====================================================== */
 
-export default function SalesPipelinePage() {
-  const t = useTranslations("salesPipeline");
+export default function ContactPipelinePage() {
+  const t = useTranslations("contactPipeline");
 
 
   const DATE_BUCKETS: {
@@ -352,12 +348,19 @@ export default function SalesPipelinePage() {
 
   const { user, permissions, ready } = useSession();
 
+  /*
+   * base = ข้อมูลชุดเต็ม (ไม่ผ่านตัวกรอง)
+   * ใช้นับจำนวนรวม นับจำนวนต่อ Sales และเป็นรายการให้เลือกเพิ่มการ์ด
+   */
+  const baseUrl =
+    ready && user ? "/api/customers?limit=100" : null;
+
   const {
     data: customersData,
-    isLoading: loading,
+    isLoading: baseLoading,
     mutate: reloadCustomers,
   } = useApi<{ data: Customer[]; total: number }>(
-    ready && user ? "/api/customers?limit=100" : null,
+    baseUrl,
   );
   const { data: stagesData } = useApi<PipelineStage[]>(
     ready && user ? "/api/pipeline-stages" : null,
@@ -372,6 +375,14 @@ export default function SalesPipelinePage() {
     [stagesData],
   );
   const [search, setSearch] = useState("");
+
+  /*
+   * หน่วงคำค้นก่อนยิง backend กันทุก keystroke = 1 request
+   */
+  const debouncedSearch = useDebouncedValue(
+    search,
+    300,
+  );
 
   const [salesFilter, setSalesFilter] = useState<
     number[]
@@ -471,6 +482,57 @@ export default function SalesPipelinePage() {
     dateFrom !== "" ||
     dateTo !== "";
 
+  /*
+   * บอร์ดดึงชุดที่ผ่านตัวกรองจาก backend
+   * - คำค้น/สถานะ/ผู้รับผิดชอบ ส่งเป็น query param ตรง ๆ
+   * - ช่วงเวลาส่งเป็น ISO datetime ตามเขตเวลาผู้ใช้
+   *   (คิดจาก startOfDay/endOfDay ของวันที่เลือก)
+   * ไม่แบ่งหน้า — แสดงทุกใบที่ผ่านเงื่อนไข (จำกัด 100 ตาม base)
+   */
+  const boardUrl = useMemo(() => {
+    if (!baseUrl) {
+      return null;
+    }
+
+    return withQuery("/api/customers", {
+      limit: 100,
+      search: debouncedSearch,
+      status: statusFilter,
+      assignedId: salesFilter.filter(
+        (id) => id !== UNASSIGNED,
+      ),
+      unassigned: salesFilter.includes(UNASSIGNED),
+      dateFrom:
+        activeRange.from === ""
+          ? ""
+          : new Date(
+              `${activeRange.from}T00:00:00`,
+            ).toISOString(),
+      dateTo:
+        activeRange.to === ""
+          ? ""
+          : new Date(
+              `${activeRange.to}T23:59:59.999`,
+            ).toISOString(),
+    });
+  }, [
+    baseUrl,
+    debouncedSearch,
+    statusFilter,
+    salesFilter,
+    activeRange,
+  ]);
+
+  const {
+    data: boardData,
+    isLoading: boardLoading,
+    mutate: reloadBoard,
+  } = useApi<{ data: Customer[]; total: number }>(
+    boardUrl,
+  );
+
+  const loading = baseLoading || boardLoading;
+
   const filterCount =
     salesFilter.length +
     statusFilter.length +
@@ -502,81 +564,13 @@ export default function SalesPipelinePage() {
   }
 
   /*
-   * ลูกค้าที่ผ่านตัวกรองแล้ว
+   * ลูกค้าที่ผ่านตัวกรองแล้ว มาจาก backend ตรง ๆ
    * (การจัดกลุ่มเป็นคอลัมน์ทำในบอร์ดให้เอง)
    */
-  const boardCustomers = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    const from =
-      activeRange.from === ""
-        ? null
-        : startOfDay(activeRange.from);
-    const to =
-      activeRange.to === ""
-        ? null
-        : endOfDay(activeRange.to);
-
-    return customers.filter(
-      (customer) => {
-        if (
-          query.length > 0 &&
-          ![
-            customer.companyName,
-            customer.email,
-            customer.phone,
-            customer.assignedUser?.name,
-          ].some((value) =>
-            (value ?? "")
-              .toLowerCase()
-              .includes(query),
-          )
-        ) {
-          return false;
-        }
-
-        if (
-          salesFilter.length > 0 &&
-          !salesFilter.includes(
-            customer.assignedId ?? UNASSIGNED,
-          )
-        ) {
-          return false;
-        }
-
-        if (
-          statusFilter.length > 0 &&
-          !statusFilter.includes(
-            customer.status,
-          )
-        ) {
-          return false;
-        }
-
-        if (from !== null || to !== null) {
-          const created = new Date(
-            customer.createdAt,
-          ).getTime();
-
-          if (from !== null && created < from) {
-            return false;
-          }
-
-          if (to !== null && created > to) {
-            return false;
-          }
-        }
-
-        return true;
-      },
-    );
-  }, [
-    customers,
-    search,
-    salesFilter,
-    statusFilter,
-    activeRange,
-  ]);
+  const boardCustomers = useMemo(
+    () => boardData?.data ?? [],
+    [boardData],
+  );
 
   /*
    * เปลี่ยนสถานะผ่าน API แล้ว refetch ข้อมูลจริงกลับมา
@@ -596,7 +590,10 @@ export default function SalesPipelinePage() {
         );
 
         setNotice(t("statusUpdated"));
-        await reloadCustomers();
+        await Promise.all([
+          reloadCustomers(),
+          reloadBoard(),
+        ]);
       } catch (err) {
         setNotice(
           getErrorMessage(
@@ -605,10 +602,13 @@ export default function SalesPipelinePage() {
           ),
         );
 
-        await reloadCustomers();
+        await Promise.all([
+          reloadCustomers(),
+          reloadBoard(),
+        ]);
       }
     },
-    [t, reloadCustomers],
+    [t, reloadCustomers, reloadBoard],
   );
 
   const handleOpenCustomer = useCallback(

@@ -1,11 +1,12 @@
 import {
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
 } from 'class-validator';
 
-export class CreateProductGroupDto {
+export class CreateCategoryDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(255)
@@ -14,9 +15,13 @@ export class CreateProductGroupDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsInt()
+  productGroupId?: number;
 }
 
-export class UpdateProductGroupDto {
+export class UpdateCategoryDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
@@ -26,4 +31,8 @@ export class UpdateProductGroupDto {
   @IsOptional()
   @IsString()
   description?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  productGroupId?: number | null;
 }

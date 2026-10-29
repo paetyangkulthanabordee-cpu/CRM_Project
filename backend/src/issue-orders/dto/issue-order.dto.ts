@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -39,10 +40,33 @@ export class CreateIssueOrderDto {
   @IsInt()
   orderPipelineId: number;
 
+  /*
+   * ส่วนลดและ VAT เป็นเปอร์เซ็นต์ (0-100)
+   * ไม่ส่งมาก็ได้: discount ใช้ 0 และ VAT ใช้ 7
+   */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  vatPercent?: number;
+
   @IsOptional()
   @IsString()
   @MaxLength(2000)
   note?: string;
+
+  /*
+   * ผู้รับผิดชอบใบสั่งซื้อ (assignee) ไม่ส่งก็ได้ -> NULL
+   */
+  @IsOptional()
+  @IsInt()
+  userId?: number;
 
   @IsArray()
   @ArrayNotEmpty()
@@ -61,9 +85,28 @@ export class UpdateIssueOrderDto {
   orderPipelineId?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  discountPercent?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  vatPercent?: number;
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   note?: string;
+
+  /*
+   * ผู้รับผิดชอบใบสั่งซื้อ (assignee)
+   */
+  @IsOptional()
+  @IsInt()
+  userId?: number;
 
   @IsOptional()
   @IsArray()

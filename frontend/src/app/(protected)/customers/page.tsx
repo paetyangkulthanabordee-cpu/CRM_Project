@@ -22,7 +22,6 @@ import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
-import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
@@ -59,6 +58,7 @@ import {
 } from "@/lib/customerDocs";
 import { useApi } from "@/lib/swr";
 import { useStoredPreference } from "@/lib/useStoredPreference";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
@@ -153,6 +153,15 @@ export default function CustomersPage() {
   const rowsPerPage = 10;
 
   /*
+   * หน่วงคำค้นก่อนยิง API กันทุก keystroke = 1 request
+   * ช่องค้นหาใน UI ยังคงใช้ค่าสดตามเดิม
+   */
+  const debouncedSearch = useDebouncedValue(
+    search,
+    300,
+  );
+
+  /*
    * มุมมองที่ผู้ใช้เลือก (ตาราง / บอร์ด) จำค่าไว้ข้ามการเปิดหน้าใหม่
    */
   const [view, setView] = useStoredPreference<CustomerView>(
@@ -167,8 +176,8 @@ export default function CustomersPage() {
   const baseQuery = useMemo(() => {
     const params = new URLSearchParams();
 
-    if (search.trim()) {
-      params.set("search", search.trim());
+    if (debouncedSearch.trim()) {
+      params.set("search", debouncedSearch.trim());
     }
     if (statusFilter) {
       params.set("status", statusFilter);
@@ -194,7 +203,7 @@ export default function CustomersPage() {
     }
 
     return params.toString();
-  }, [search, statusFilter, dateFilter]);
+  }, [debouncedSearch, statusFilter, dateFilter]);
 
   /*
    * ตาราง = paginate จาก server
@@ -362,29 +371,6 @@ export default function CustomersPage() {
 
     return map;
   }, [stages]);
-
-  const totals = useMemo(() => {
-    let quotation = 0;
-    let invoiced = 0;
-    let received = 0;
-    let outstanding = 0;
-
-    for (const customer of customers) {
-      const summary =
-        docSummary[customer.customerId];
-
-      if (!summary) {
-        continue;
-      }
-
-      quotation += summary.quotation.total;
-      invoiced += summary.invoice.total;
-      received += summary.receipt.total;
-      outstanding += summary.outstanding;
-    }
-
-    return { quotation, invoiced, received, outstanding };
-  }, [customers, docSummary]);
 
   /* =====================================================
      ACTIONS
@@ -588,6 +574,7 @@ export default function CustomersPage() {
     permissions ?? {
       dashboard: true,
       customers: true,
+      salesPipeline: true,
       orderPipeline: true,
       documents: true,
       products: true,
@@ -705,96 +692,6 @@ export default function CustomersPage() {
               {t("addNew")}
             </Button>
           </Stack>
-        </Box>
-
-        {/* =================================================
-            STAT CARDS
-        ================================================== */}
-
-        <Box
-          sx={{
-            mb: 3,
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(2, 1fr)",
-              lg: "repeat(4, 1fr)",
-            },
-            gap: 2,
-          }}
-        >
-          {[
-            {
-              label: t("stats.showing"),
-              value: `${total}`,
-              sub: t("stats.fromTotal", {
-                total: total,
-              }),
-              color: "#2563eb",
-            },
-            {
-              label: t("stats.quotationTotal"),
-              value: formatBaht(totals.quotation),
-              sub: t("stats.quotationSub"),
-              color: "#0f62fe",
-            },
-            {
-              label: t("stats.invoiceTotal"),
-              value: formatBaht(totals.invoiced),
-              sub: t("stats.invoiceSub", {
-                amount: formatBaht(totals.received),
-              }),
-              color: "#f97316",
-            },
-            {
-              label: t("stats.outstanding"),
-              value: formatBaht(totals.outstanding),
-              sub: t("stats.outstandingSub"),
-              color: "#dc2626",
-            },
-          ].map((stat) => (
-            <Card
-              key={stat.label}
-              sx={{
-                border: "1px solid #e7ebf2",
-                borderRadius: "16px",
-                boxShadow:
-                  "0 1px 3px rgba(15,23,42,0.04)",
-              }}
-            >
-              <CardContent
-                sx={{
-                  "&:last-child": { pb: 2.25 },
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{ color: "#64748b" }}
-                >
-                  {stat.label}
-                </Typography>
-
-                <Typography
-                  variant="h5"
-                  sx={{
-                    mt: 0.5,
-                    fontWeight: 800,
-                    color: stat.color,
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {stat.value}
-                </Typography>
-
-                <Typography
-                  variant="caption"
-                  sx={{ color: "#94a3b8" }}
-                >
-                  {stat.sub}
-                </Typography>
-              </CardContent>
-            </Card>
-          ))}
         </Box>
 
         {/* =================================================
@@ -1065,26 +962,6 @@ export default function CustomersPage() {
                     </TableCell>
 
                     <TableCell
-                      sx={{
-                        fontWeight: 800,
-                        color: "#475569",
-                      }}
-                    >
-                      {t("documentsColumn")}
-                      <Typography
-                        component="span"
-                        variant="caption"
-                        sx={{
-                          display: "block",
-                          fontWeight: 500,
-                          color: "#94a3b8",
-                        }}
-                      >
-                        {t("documentsSub")}
-                      </Typography>
-                    </TableCell>
-
-                    <TableCell
                       align="right"
                       sx={{
                         fontWeight: 800,
@@ -1121,7 +998,7 @@ export default function CustomersPage() {
                       length: 6,
                     }).map((_, row) => (
                       <TableRow key={`skeleton-${row}`}>
-                        {[220, 150, 140, 170, 110, 90, 140].map(
+                        {[220, 150, 140, 110, 90, 140].map(
                           (width, cell) => (
                             <TableCell key={cell}>
                               <Skeleton
@@ -1135,7 +1012,7 @@ export default function CustomersPage() {
                     ))
                   ) : customers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7}>
+                      <TableCell colSpan={6}>
                         <Box
                           sx={{
                             py: 7,
@@ -1297,56 +1174,6 @@ export default function CustomersPage() {
                                   "#94a3b8",
                               }}
                             />
-                          </TableCell>
-
-                          <TableCell>
-                            <Stack
-                              direction="row"
-                              spacing={0.75}
-                            >
-                              {[
-                                {
-                                  label: "QT",
-                                  count:
-                                    summary.quotation
-                                      .count,
-                                  color: "#2563eb",
-                                },
-                                {
-                                  label: "IV",
-                                  count:
-                                    summary.invoice
-                                      .count,
-                                  color: "#f97316",
-                                },
-                                {
-                                  label: "RC",
-                                  count:
-                                    summary.receipt
-                                      .count,
-                                  color: "#16a34a",
-                                },
-                              ].map((item) => (
-                                <Chip
-                                  key={item.label}
-                                  size="small"
-                                  label={`${item.label} ${item.count}`}
-                                  sx={{
-                                    fontWeight: 800,
-                                    fontSize: 11,
-                                    borderRadius: "7px",
-                                    bgcolor:
-                                      item.count > 0
-                                        ? `${item.color}14`
-                                        : "#f4f6f9",
-                                    color:
-                                      item.count > 0
-                                        ? item.color
-                                        : "#94a3b8",
-                                  }}
-                                />
-                              ))}
-                            </Stack>
                           </TableCell>
 
                           <TableCell align="right">

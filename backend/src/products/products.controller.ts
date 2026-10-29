@@ -13,10 +13,11 @@ import {
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator.js';
 import { ProductsService } from './products.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
+import { ListCatalogDto } from './dto/list-catalog.dto.js';
 import { ListProductsDto } from './dto/list-products.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
-import { CreateProductGroupDto } from './dto/product-group.dto.js';
-import { UpdateProductGroupDto } from './dto/product-group.dto.js';
+import { CreateCategoryDto } from './dto/category.dto.js';
+import { UpdateCategoryDto } from './dto/category.dto.js';
 import { CreateProductUnitDto } from './dto/product-unit.dto.js';
 import { UpdateProductUnitDto } from './dto/product-unit.dto.js';
 
@@ -42,13 +43,13 @@ export class ProductsController {
   }
 
   @Get('groups')
-  findAllGroups() {
-    return this.productsService.findAllGroups();
+  findAllGroups(@Query() query: ListCatalogDto) {
+    return this.productsService.findAllGroups(query);
   }
 
   @Get('units')
-  findAllUnits() {
-    return this.productsService.findAllUnits();
+  findAllUnits(@Query() query: ListCatalogDto) {
+    return this.productsService.findAllUnits(query);
   }
 
   @Get(':id')
@@ -79,13 +80,13 @@ export class ProductsController {
   }
 
   /* =====================================================
-     PRODUCT GROUPS (จัดการเฉพาะ Admin/Manager)
+     CATEGORIES / หมวดหมู่สินค้า (จัดการเฉพาะ Admin/Manager)
   ===================================================== */
 
   @Post('groups')
   @RequirePermissions('products', 'productManagement')
   createGroup(
-    @Body() dto: CreateProductGroupDto,
+    @Body() dto: CreateCategoryDto,
   ) {
     return this.productsService.createGroup(dto);
   }
@@ -94,7 +95,7 @@ export class ProductsController {
   @RequirePermissions('products', 'productManagement')
   updateGroup(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateProductGroupDto,
+    @Body() dto: UpdateCategoryDto,
   ) {
     return this.productsService.updateGroup(
       id,

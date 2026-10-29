@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 
 import { Customer } from '../customers/entities/customer.entity.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
+import { ListUsersDto } from './dto/list-users.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { User } from './entities/user.entity.js';
 
@@ -49,10 +50,30 @@ export class UsersService {
     return bcrypt.compare(plain, hash);
   }
 
-  async findAll(): Promise<UserListItem[]> {
-    const users = await this.usersRepository.find({
-      order: { userId: 'ASC' },
-    });
+  async findAll(
+    query: ListUsersDto = {},
+  ): Promise<UserListItem[]> {
+    const search = query.search?.trim();
+    let users: User[];
+
+    /*
+     * มีคำค้นค่อยสร้างเงื่อนไข ILIKE
+     * ไม่มีคำค้นใช้ find ธรรมดาเหมือนเดิม
+     */
+    if (search) {
+      users = await this.usersRepository
+        .createQueryBuilder('user')
+        .where(
+          '(user.name ILIKE :search OR user.email ILIKE :search OR CAST(user.role AS TEXT) ILIKE :search)',
+          { search: `%${search}%` },
+        )
+        .orderBy('user.userId', 'ASC')
+        .getMany();
+    } else {
+      users = await this.usersRepository.find({
+        order: { userId: 'ASC' },
+      });
+    }
 
     const rows: {
       assignedId: number;

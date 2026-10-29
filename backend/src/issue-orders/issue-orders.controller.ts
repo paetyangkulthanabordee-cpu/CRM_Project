@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator.js';
@@ -20,6 +21,8 @@ import {
   UpdateIssueOrderDto,
 } from './dto/issue-order.dto.js';
 
+import { ListIssueOrdersDto } from './dto/list-issue-orders.dto.js';
+
 @Controller('issue-orders')
 @RequirePermissions('orderPipeline')
 export class IssueOrdersController {
@@ -28,8 +31,8 @@ export class IssueOrdersController {
   ) {}
 
   @Get()
-  findAll() {
-    return this.ordersService.findAll();
+  findAll(@Query() query: ListIssueOrdersDto) {
+    return this.ordersService.findAll(query);
   }
 
   @Get(':id')

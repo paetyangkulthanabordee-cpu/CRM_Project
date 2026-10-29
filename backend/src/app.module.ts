@@ -11,6 +11,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
+import { DocumentTypesModule } from './document-types/document-types.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
 import { InvoicesModule } from './invoices/invoices.module.js';
 import { ReceiptsModule } from './receipts/receipts.module.js';
@@ -20,6 +21,7 @@ import { DashboardModule } from './dashboard/dashboard.module.js';
 import { ProductsModule } from './products/products.module.js';
 import { OrderPipelineModule } from './order-pipeline/order-pipeline.module.js';
 import { IssueOrdersModule } from './issue-orders/issue-orders.module.js';
+import { WorkflowRulesModule } from './workflow-rules/workflow-rules.module.js';
 
 const requiredEnvVars = [
   'DATABASE_HOST',
@@ -58,6 +60,7 @@ if (missingEnvVars.length > 0) {
     UsersModule,
     CustomersModule,
     DocumentsModule,
+    DocumentTypesModule,
     QuotationsModule,
     InvoicesModule,
     ReceiptsModule,
@@ -68,6 +71,7 @@ if (missingEnvVars.length > 0) {
     ProductsModule,
     OrderPipelineModule,
     IssueOrdersModule,
+    WorkflowRulesModule,
   ],
 
   controllers: [AppController],

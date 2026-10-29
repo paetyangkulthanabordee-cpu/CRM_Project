@@ -137,6 +137,207 @@ export const STAGE_COLOR_PRESETS = [
   "#0891b2",
 ] as const;
 
+/* =====================================================
+   KANBAN COLUMNS (ใช้ร่วมกันทุกบอร์ด)
+   คอลัมน์ไม่ว่าจะมาจากตารางไหนก็หน้าตาเดียวกัน
+   คือ stageKey + label + color
+====================================================== */
+
+export interface KanbanStage {
+  stageKey: string;
+  label: string;
+  color: string;
+}
+
+/* =====================================================
+   ORDER PIPELINE (บอร์ดใบสั่งซื้อ)
+====================================================== */
+
+/*
+ * แถวจาก GET /api/order-pipeline
+ * มีจำนวนใบสั่งซื้อในคอลัมน์นั้นมาให้ด้วย
+ */
+export interface OrderPipelineStage
+  extends KanbanStage {
+  stageId: number;
+  position: number;
+  issueOrderCount: number;
+}
+
+/*
+ * คอลัมน์ที่ฝังมาในใบสั่งซื้อ (relation orderPipeline)
+ * เป็น object ของตาราง order_pipeline ตรง ๆ ไม่มีจำนวนการ์ด
+ */
+export interface OrderPipelineColumn {
+  id: number;
+  stageKey: string;
+  label: string;
+  color: string;
+  position: number;
+}
+
+/*
+ * หนึ่งแถวในใบสั่งซื้อ
+ * เก็บ unitPrice เป็น snapshot ตอนสั่งซื้อ
+ */
+export interface IssueOrderLine {
+  id?: number;
+  issueOrderId?: number;
+  productId: number;
+  quantity: number;
+  unitPrice: number;
+  product?: Product | null;
+}
+
+export interface IssueOrder {
+  id: number;
+  customerId: number;
+  customer?: Customer | null;
+  orderPipelineId: number;
+  orderPipeline?: OrderPipelineColumn | null;
+  details?: IssueOrderLine[];
+  attachments?: IssueOrderAttachment[];
+  amount: number;
+
+  /*
+   * ส่วนลดและ VAT ระดับใบสั่งซื้อ (เป็นเปอร์เซ็นต์)
+   * amount คือยอดสุทธิหลังหักส่วนลดและบวก VAT แล้ว
+   * ใบสั่งซื้อเก่าที่ยังไม่มีข้อมูลให้ treat เป็น 0% / 7%
+   */
+  discountPercent?: number;
+  vatPercent?: number;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/*
+ * ไฟล์แนบของใบสั่งซื้อ (metadata จาก /api/issue-orders/:id/attachments)
+ * ใช้ตอนตรวจ Workflow Rule ข้อ "ต้องแนบไฟล์"
+ */
+export interface IssueOrderAttachment {
+  attachmentId: number;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+/*
+ * ประเภทเงื่อนไขของ Workflow Rule
+ * - attachment : ต้องแนบไฟล์อย่างน้อย minFiles ไฟล์
+ * - field      : ต้องกรอกฟิลด์ที่กำหนด (note / details / amount)
+ * - document   : ต้องมีเอกสารประเภท docType ของลูกค้ารายนั้น
+ * - payment    : ต้องมีข้อมูลการชำระเงิน (เอกสารใบเสร็จ)
+ */
+export type WorkflowConditionType =
+  | "attachment"
+  | "field"
+  | "document"
+  | "payment";
+
+export interface WorkflowRuleConditionConfig {
+  minFiles?: number;
+  field?: string;
+  docType?: DocType;
+}
+
+/*
+ * แถวหนึ่งในตาราง Workflow Rules Management
+ * backend แนบ label ของ stage ต้นทาง/ปลายทางมาให้แล้ว
+ * documentTypeId = FK -> document_type (ใช้กับ conditionType 'document')
+ */
+export interface WorkflowRule {
+  ruleId: number;
+  ruleName: string;
+  fromStageId: number;
+  fromStageKey: string;
+  fromStageLabel: string;
+  fromStageColor: string;
+  toStageId: number;
+  toStageKey: string;
+  toStageLabel: string;
+  toStageColor: string;
+  conditionType: WorkflowConditionType;
+  conditionConfig: WorkflowRuleConditionConfig;
+  documentTypeId?: number | null;
+  isRequired: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/*
+ * ผลตรวจ Workflow Rule หนึ่งข้อของใบสั่งซื้อ
+ * มาจาก 400 ตอนย้ายขั้นตอนถูกบล็อก (unmetRules)
+ * และ GET /api/workflow-rules/check
+ *
+ * ใช้แสดงแถบ mark ในหน้ารายละเอียดว่าต้องแนบไฟล์อะไร
+ * พร้อมความคืบหน้า currentCount/requiredCount
+ */
+export interface WorkflowRuleCheck {
+  ruleId: number;
+  ruleName: string;
+  conditionType: WorkflowConditionType;
+  met: boolean;
+  requirementText: string;
+  documentTypeId: number | null;
+  documentTypeLabel: string | null;
+  currentCount: number;
+  requiredCount: number;
+}
+
+/*
+ * คำตอบของ GET /api/workflow-rules/check?orderId=&toStageId=
+ * allowed = true เมื่อ rule ทุกข้อผ่าน -> หน้ารายละเอียด
+ * โชว์ปุ่ม "ย้ายไปขั้นตอนเลย" ให้กดยืนยันได้ทันที
+ */
+export interface WorkflowMoveCheck {
+  orderId: number;
+  fromStageId: number;
+  toStageId: number;
+  toStageLabel: string;
+  allowed: boolean;
+  rules: WorkflowRuleCheck[];
+}
+
+/*
+ * response ของ 400 ตอนถูก Workflow Rule บล็อกการย้ายขั้นตอน
+ * (backend ส่ง message ตัวเดิมคู่กับ errorCode + unmetRules)
+ */
+export interface WorkflowRuleBlockedError {
+  errorCode?: string;
+  message?: string;
+  unmetRules?: WorkflowRuleCheck[];
+}
+
+/*
+ * การย้ายขั้นตอนที่ถูกบล็อก — หน้าบอร์ดเก็บไว้แล้วส่งเข้า dialog
+ * ให้แสดงแถบ mark "ต้องแนบไฟล์อะไร" และปุ่มยืนยันย้าย
+ */
+export interface PendingStageMove {
+  orderId: number;
+  toStageKey: string;
+  toStageLabel: string;
+  rules: WorkflowRuleCheck[];
+}
+
+/*
+ * แถวจาก GET /api/document-types (ตาราง document_type)
+ * ใช้เป็นตัวเลือก dropdown "ประเภทเอกสาร" ใน Workflow Rule
+ * และหน้า /document-types (จัดการเพิ่ม/แก้/ลบ)
+ *
+ * *UsageCount = จำนวนที่ชี้มายังแถว ฝั่ง backend ส่งมาด้วย
+ * แต่หน้า /document-types ไม่ได้แสดงแล้ว — เก็บไว้ให้ interface
+ * ตรงกับ response จริง (ตัวนับยังถูกใช้ตอนบล็อกการลบฝั่ง server)
+ */
+export interface DocumentTypeItem {
+  id: number;
+  documentType: string;
+  ruleUsageCount?: number;
+  attachmentUsageCount?: number;
+}
+
 export interface DashboardKpis {
   totalCustomers: number;
   newCustomers: number;
@@ -203,11 +404,38 @@ export interface DashboardData {
    PRODUCTS (สินค้า)
 ===================================================== */
 
+/**
+ * ตาราง category (หมวดหมู่สินค้า)
+ * ชื่อเดิมของ type นี้คือ ProductGroup ซึ่งสับสนกับตาราง product_group
+ * จึงเปลี่ยนมาใช้ชื่อ Category ให้ตรงกับตารางจริง
+ */
+export interface Category {
+  id: number;
+  name: string;
+  description: string | null;
+  productGroupId?: number | null;
+  productGroup?: ProductGroup | null;
+  productCount?: number;
+}
+
+/**
+ * ตาราง product_group (กลุ่มสินค้า) = master list: ชื่อกลุ่ม + คำอธิบาย
+ * ไม่มี FK ไปตารางอื่น — หมวดหมู่ผูกกลุ่มผ่าน category.productGroupId
+ */
 export interface ProductGroup {
   id: number;
   name: string;
   description: string | null;
-  productCount?: number;
+}
+
+/**
+ * รายการ product_group ที่ backend ส่งกลับพร้อม relation
+ */
+export interface ProductGroupList {
+  data: ProductGroup[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 export interface ProductUnit {
@@ -220,11 +448,11 @@ export interface Product {
   id: number;
   name: string;
   skuCode: string | null;
-  productGroupId: number;
+  categoryId: number;
   description: string | null;
   price: number;
   productUnitId: number;
-  productGroup?: ProductGroup | null;
+  category?: Category | null;
   productUnit?: ProductUnit | null;
 }
 

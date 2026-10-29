@@ -4,17 +4,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 
 import { CreateProductDto } from './dto/create-product.dto.js';
+import { ListCatalogDto } from './dto/list-catalog.dto.js';
 import { ListProductsDto } from './dto/list-products.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
-import { CreateProductGroupDto } from './dto/product-group.dto.js';
-import { UpdateProductGroupDto } from './dto/product-group.dto.js';
+import { CreateCategoryDto } from './dto/category.dto.js';
+import { UpdateCategoryDto } from './dto/category.dto.js';
 import { CreateProductUnitDto } from './dto/product-unit.dto.js';
 import { UpdateProductUnitDto } from './dto/product-unit.dto.js';
 import { Product } from './entities/product.entity.js';
 import { Category } from './entities/category.entity.js';
+import { ProductGroup } from './entities/product-group.entity.js';
 import { ProductUnit } from './entities/product-unit.entity.js';
 
 @Injectable()
@@ -23,7 +25,9 @@ export class ProductsService {
     @InjectRepository(Product)
     private readonly productsRepository: Repository<Product>,
     @InjectRepository(Category)
-    private readonly groupsRepository: Repository<Category>,
+    private readonly categoriesRepository: Repository<Category>,
+    @InjectRepository(ProductGroup)
+    private readonly productGroupsRepository: Repository<ProductGroup>,
     @InjectRepository(ProductUnit)
     private readonly unitsRepository: Repository<ProductUnit>,
   ) {}
@@ -36,7 +40,11 @@ export class ProductsService {
     const builder = this.productsRepository
       .createQueryBuilder('product')
       .leftJoinAndSelect(
-        'product.productGroup',
+        'product.category',
+        'category',
+      )
+      .leftJoinAndSelect(
+        'category.productGroup',
         'group',
       )
       .leftJoinAndSelect(
@@ -45,16 +53,27 @@ export class ProductsService {
       )
       .orderBy('product.name', 'ASC');
 
-    if (query.groupId) {
+    if (query.categoryId) {
       builder.andWhere(
-        'product.productGroupId = :groupId',
-        { groupId: query.groupId },
+        'product.categoryId = :categoryId',
+        { categoryId: query.categoryId },
+      );
+    }
+
+    /*
+     * กลุ่มสินค้าไม่ได้ผูกกับสินค้าโดยตรง
+     * จึง filter ผ่าน category.product_group_id แทน
+     */
+    if (query.productGroupId) {
+      builder.andWhere(
+        'category.productGroupId = :productGroupId',
+        { productGroupId: query.productGroupId },
       );
     }
 
     if (query.search) {
       builder.andWhere(
-        '(product.name ILIKE :search OR product.sku_code ILIKE :search OR group.name ILIKE :search)',
+        '(product.name ILIKE :search OR product.sku_code ILIKE :search OR category.name ILIKE :search OR group.name ILIKE :search)',
         { search: `%${query.search}%` },
       );
     }
@@ -81,7 +100,9 @@ export class ProductsService {
       await this.productsRepository.findOne({
         where: { id },
         relations: {
-          productGroup: true,
+          category: {
+            productGroup: true,
+          },
           productUnit: true,
         },
       });
@@ -130,14 +151,14 @@ export class ProductsService {
 
   async create(dto: CreateProductDto) {
     await this.assertSkuCodeAvailable(dto.skuCode);
-    await this.assertGroupExists(dto.productGroupId);
+    await this.assertCategoryExists(dto.categoryId);
     await this.assertUnitExists(dto.productUnitId);
 
     const product =
       this.productsRepository.create({
         name: dto.name,
         skuCode: dto.skuCode ?? null,
-        productGroupId: dto.productGroupId,
+        categoryId: dto.categoryId,
         description: dto.description ?? null,
         price: dto.price,
         productUnitId: dto.productUnitId,
@@ -156,8 +177,8 @@ export class ProductsService {
       await this.assertSkuCodeAvailable(dto.skuCode, id);
     }
 
-    if (dto.productGroupId !== undefined) {
-      await this.assertGroupExists(dto.productGroupId);
+    if (dto.categoryId !== undefined) {
+      await this.assertCategoryExists(dto.categoryId);
     }
 
     if (dto.productUnitId !== undefined) {
@@ -222,10 +243,26 @@ export class ProductsService {
     }
   }
 
+  private async assertCategoryExists(
+    categoryId: number,
+  ) {
+    const count =
+      await this.categoriesRepository.count({
+        where: { id: categoryId },
+      });
+
+    if (count === 0) {
+      throw new NotFoundException(
+        'ไม่พบหมวดหมู่สินค้าที่เลือก',
+      );
+    }
+  }
+
   private async assertGroupExists(groupId: number) {
-    const count = await this.groupsRepository.count(
-      { where: { id: groupId } },
-    );
+    const count =
+      await this.productGroupsRepository.count({
+        where: { id: groupId },
+      });
 
     if (count === 0) {
       throw new NotFoundException(
@@ -247,25 +284,34 @@ export class ProductsService {
   }
 
   /* =====================================================
-     PRODUCT GROUPS
+     CATEGORIES / หมวดหมู่สินค้า (ตาราง category)
   ===================================================== */
 
-  async findAllGroups() {
-    const groups = await this.groupsRepository.find({
-      order: { name: 'ASC' },
-    });
+  async findAllGroups(query: ListCatalogDto = {}) {
+    const search = query.search?.trim();
 
-    const counts: { productGroupId: number; count: string }[] =
+    const groups =
+      await this.categoriesRepository.find({
+        order: { name: 'ASC' },
+        relations: {
+          productGroup: true,
+        },
+        ...(search
+          ? { where: { name: ILike(`%${search}%`) } }
+          : {}),
+      });
+
+    const counts: { categoryId: number; count: string }[] =
       await this.productsRepository
         .createQueryBuilder('product')
-        .select('product.productGroupId', 'productGroupId')
+        .select('product.categoryId', 'categoryId')
         .addSelect('COUNT(product.id)', 'count')
-        .groupBy('product.productGroupId')
+        .groupBy('product.categoryId')
         .getRawMany();
 
     const countMap = new Map<number, number>(
       counts.map((row) => [
-        Number(row.productGroupId),
+        Number(row.categoryId),
         Number(row.count),
       ]),
     );
@@ -274,25 +320,45 @@ export class ProductsService {
       id: group.id,
       name: group.name,
       description: group.description,
+      productGroupId: group.productGroupId,
+      productGroup: group.productGroup
+        ? {
+            id: group.productGroup.id,
+            name: group.productGroup.name,
+          }
+        : null,
       productCount:
         countMap.get(group.id) ?? 0,
     }));
   }
 
-  async createGroup(dto: CreateProductGroupDto) {
-    const group = this.groupsRepository.create({
+  async createGroup(dto: CreateCategoryDto) {
+    if (dto.productGroupId !== undefined) {
+      await this.assertGroupExists(
+        dto.productGroupId,
+      );
+    }
+
+    const group = this.categoriesRepository.create({
       name: dto.name,
       description: dto.description ?? null,
+      productGroupId: dto.productGroupId ?? null,
     });
 
-    return this.groupsRepository.save(group);
+    return this.categoriesRepository.save(group);
   }
 
   async updateGroup(
     id: number,
-    dto: UpdateProductGroupDto,
+    dto: UpdateCategoryDto,
   ) {
     const group = await this.findGroup(id);
+
+    if (typeof dto.productGroupId === 'number') {
+      await this.assertGroupExists(
+        dto.productGroupId,
+      );
+    }
 
     const changes = Object.fromEntries(
       Object.entries(dto).filter(
@@ -302,36 +368,36 @@ export class ProductsService {
 
     Object.assign(group, changes);
 
-    return this.groupsRepository.save(group);
+    return this.categoriesRepository.save(group);
   }
 
   async removeGroup(id: number) {
     const group = await this.findGroup(id);
 
     const count = await this.productsRepository.count(
-      { where: { productGroupId: id } },
+      { where: { categoryId: id } },
     );
 
     if (count > 0) {
       throw new ConflictException(
-        `ลบไม่ได้ เพราะกลุ่ม "${group.name}" ยังมีสินค้าอยู่ ${count} รายการ กรุณาย้ายสินค้าออกก่อน`,
+        `ลบไม่ได้ เพราะหมวดหมู่ "${group.name}" ยังมีสินค้าอยู่ ${count} รายการ กรุณาย้ายสินค้าออกก่อน`,
       );
     }
 
-    await this.groupsRepository.remove(group);
+    await this.categoriesRepository.remove(group);
 
     return { id, deleted: true };
   }
 
   private async findGroup(id: number) {
     const group =
-      await this.groupsRepository.findOne({
+      await this.categoriesRepository.findOne({
         where: { id },
       });
 
     if (!group) {
       throw new NotFoundException(
-        'ไม่พบกลุ่มสินค้านี้',
+        'ไม่พบหมวดหมู่สินค้านี้',
       );
     }
 
@@ -342,9 +408,14 @@ export class ProductsService {
      PRODUCT UNITS
   ===================================================== */
 
-  async findAllUnits() {
+  async findAllUnits(query: ListCatalogDto = {}) {
+    const search = query.search?.trim();
+
     const units = await this.unitsRepository.find({
       order: { name: 'ASC' },
+      ...(search
+        ? { where: { name: ILike(`%${search}%`) } }
+        : {}),
     });
 
     const counts: { productUnitId: number; count: string }[] =

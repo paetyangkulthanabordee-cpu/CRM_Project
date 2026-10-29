@@ -10,6 +10,8 @@ import { Repository } from 'typeorm';
 import { Customer } from '../customers/entities/customer.entity.js';
 import { Product } from '../products/entities/product.entity.js';
 import { OrderPipeline } from '../order-pipeline/entities/order-pipeline.entity.js';
+import { User } from '../users/entities/user.entity.js';
+import { WorkflowRulesService } from '../workflow-rules/workflow-rules.service.js';
 
 import { IssueOrder } from './entities/issue-order.entity.js';
 import { IssueOrderDetail } from './entities/issue-order-detail.entity.js';
@@ -19,6 +21,8 @@ import type {
   IssueOrderDetailDto,
   UpdateIssueOrderDto,
 } from './dto/issue-order.dto.js';
+
+import type { ListIssueOrdersDto } from './dto/list-issue-orders.dto.js';
 
 @Injectable()
 export class IssueOrdersService {
@@ -33,19 +37,67 @@ export class IssueOrdersService {
     private readonly productsRepository: Repository<Product>,
     @InjectRepository(OrderPipeline)
     private readonly stagesRepository: Repository<OrderPipeline>,
+    @InjectRepository(User)
+    private readonly usersRepository: Repository<User>,
+    private readonly workflowRulesService: WorkflowRulesService,
   ) {}
 
-  async findAll(): Promise<IssueOrder[]> {
-    return this.ordersRepository.find({
-      relations: {
-        customer: true,
-        orderPipeline: true,
-        details: {
-          product: true,
-        },
-      },
-      order: { createdAt: 'DESC' },
-    });
+  async findAll(
+    query: ListIssueOrdersDto = {},
+  ): Promise<IssueOrder[]> {
+    const builder = this.ordersRepository
+      .createQueryBuilder('o')
+      .leftJoinAndSelect('o.customer', 'customer')
+      .leftJoinAndSelect(
+        'o.orderPipeline',
+        'pipeline',
+      )
+      .leftJoinAndSelect('o.user', 'user')
+      .leftJoinAndSelect('o.details', 'detail')
+      .leftJoinAndSelect('detail.product', 'product')
+      .leftJoinAndSelect('o.attachments', 'attachment')
+      .orderBy('o.createdAt', 'DESC');
+
+    const search = query.search?.trim();
+
+    if (search) {
+      /*
+       * ค้นชื่อสินค้าด้วย EXISTS ไม่ใช่ join ตรง ๆ
+       * เพราะ join ตรง ๆ จะคัดรายละเอียดที่ไม่ตรงคำค้นออก
+       * ทำให้การ์ดหายแถวสินค้าบางบรรทัด
+       */
+      builder.andWhere(
+        `(
+          CAST(o.id AS TEXT) ILIKE :search
+          OR customer.companyName ILIKE :search
+          OR o.note ILIKE :search
+          OR EXISTS (
+            SELECT 1
+            FROM issue_order_detail d
+            INNER JOIN product p ON p.id = d.product_id
+            WHERE d.issue_order_id = o.id
+              AND p.name ILIKE :search
+          )
+        )`,
+        { search: `%${search}%` },
+      );
+    }
+
+    if (query.pipelineId !== undefined) {
+      builder.andWhere(
+        'o.orderPipelineId = :pipelineId',
+        { pipelineId: query.pipelineId },
+      );
+    }
+
+    if (query.customerId !== undefined) {
+      builder.andWhere(
+        'o.customerId = :customerId',
+        { customerId: query.customerId },
+      );
+    }
+
+    return builder.getMany();
   }
 
   async findOne(id: number) {
@@ -55,9 +107,11 @@ export class IssueOrdersService {
         relations: {
           customer: true,
           orderPipeline: true,
+          user: true,
           details: {
             product: true,
           },
+          attachments: true,
         },
       });
 
@@ -74,13 +128,24 @@ export class IssueOrdersService {
     await this.assertCustomerExists(dto.customerId);
     await this.assertStageExists(dto.orderPipelineId);
 
+    if (dto.userId !== undefined) {
+      await this.assertUserExists(dto.userId);
+    }
+
     const lines =
       await this.resolveDetails(dto.details);
 
-    const amount = lines.reduce(
-      (sum, line) =>
-        sum + line.quantity * line.unitPrice,
-      0,
+    /*
+     * ไม่ส่งมาก็ได้: ส่วนลดใช้ 0% และ VAT ใช้ 7%
+     * amount ที่เก็บคือยอดสุทธิหลังหักส่วนลดและบวก VAT แล้ว
+     */
+    const discountPercent = dto.discountPercent ?? 0;
+    const vatPercent = dto.vatPercent ?? 7;
+
+    const totals = computeTotals(
+      lines,
+      discountPercent,
+      vatPercent,
     );
 
     const orderId = await this.ordersRepository.manager.transaction(
@@ -91,7 +156,10 @@ export class IssueOrdersService {
             manager.create(IssueOrder, {
               customerId: dto.customerId,
               orderPipelineId: dto.orderPipelineId,
-              amount: round2(amount),
+              userId: dto.userId ?? null,
+              amount: totals.grandTotal,
+              discountPercent,
+              vatPercent,
               note: dto.note ?? null,
             }),
           );
@@ -124,24 +192,76 @@ export class IssueOrdersService {
     id: number,
     dto: UpdateIssueOrderDto,
   ) {
-    const order = await this.findOne(id);
+    /*
+     * เช็คว่ามีใบสั่งซื้อก่อน แล้วค่อยโหลดใหม่แบบไม่เอา relation
+     * เพราะ entity ที่มี relation ฝังอยู่จะถูก TypeORM ใช้ทับค่า FK
+     * ตอน save ทำให้บันทึกแล้วค่าไม่เปลี่ยน
+     */
+    await this.findOne(id);
 
     if (dto.customerId !== undefined) {
       await this.assertCustomerExists(
         dto.customerId,
       );
-      order.customerId = dto.customerId;
     }
 
     if (dto.orderPipelineId !== undefined) {
       await this.assertStageExists(
         dto.orderPipelineId,
       );
+    }
+
+    if (dto.userId !== undefined) {
+      await this.assertUserExists(dto.userId);
+    }
+
+    const order = await this.ordersRepository.findOne({
+      where: { id },
+    });
+
+    if (!order) {
+      throw new NotFoundException(
+        'ไม่พบใบสั่งซื้อนี้',
+      );
+    }
+
+    if (dto.customerId !== undefined) {
+      order.customerId = dto.customerId;
+    }
+
+    /*
+     * เปลี่ยนขั้นตอนผ่าน PATCH ทั่วไปก็ต้องผ่าน Workflow Rules
+     * ก่อนเสมอ (หน้ารายละเอียดการ์ดแก้ขั้นตอนจากเส้นทางนี้ด้วย)
+     */
+    if (
+      dto.orderPipelineId !== undefined &&
+      dto.orderPipelineId !== order.orderPipelineId
+    ) {
+      await this.workflowRulesService.assertMoveAllowed(
+        order,
+        order.orderPipelineId,
+        dto.orderPipelineId,
+      );
+    }
+
+    if (dto.orderPipelineId !== undefined) {
       order.orderPipelineId = dto.orderPipelineId;
     }
 
     if (dto.note !== undefined) {
       order.note = dto.note;
+    }
+
+    if (dto.userId !== undefined) {
+      order.userId = dto.userId;
+    }
+
+    if (dto.discountPercent !== undefined) {
+      order.discountPercent = dto.discountPercent;
+    }
+
+    if (dto.vatPercent !== undefined) {
+      order.vatPercent = dto.vatPercent;
     }
 
     /*
@@ -152,13 +272,13 @@ export class IssueOrdersService {
       const lines =
         await this.resolveDetails(dto.details);
 
-      order.amount = round2(
-        lines.reduce(
-          (sum, line) =>
-            sum + line.quantity * line.unitPrice,
-          0,
-        ),
+      const totals = computeTotals(
+        lines,
+        order.discountPercent,
+        order.vatPercent,
       );
+
+      order.amount = totals.grandTotal;
 
       await this.ordersRepository.manager.transaction(
         async (manager) => {
@@ -180,6 +300,26 @@ export class IssueOrdersService {
           );
         },
       );
+    } else if (
+      dto.discountPercent !== undefined ||
+      dto.vatPercent !== undefined
+    ) {
+      /*
+       * เปลี่ยนแค่ส่วนลดหรือ VAT โดยไม่แตะรายการสินค้า
+       * ต้องโหลดรายการเดิมมาคำนวณ amount ใหม่ด้วย
+       */
+      const existingLines =
+        await this.detailsRepository.find({
+          where: { issueOrderId: id },
+        });
+
+      const totals = computeTotals(
+        existingLines,
+        order.discountPercent,
+        order.vatPercent,
+      );
+
+      order.amount = totals.grandTotal;
     }
 
     await this.ordersRepository.save(order);
@@ -191,9 +331,34 @@ export class IssueOrdersService {
     id: number,
     orderPipelineId: number,
   ) {
-    const order = await this.findOne(id);
-
     await this.assertStageExists(orderPipelineId);
+
+    /*
+     * โหลด entity แบบไม่เอา relation มาด้วย
+     * ถ้าโหลด relation orderPipeline มาด้วย TypeORM จะใช้ค่าจาก object เดิม
+     * ทับตอน save ทำให้ลากการ์ดแล้วคอลัมน์ไม่เปลี่ยน (บันทึกนิ่ง)
+     */
+    const order = await this.ordersRepository.findOne({
+      where: { id },
+    });
+
+    if (!order) {
+      throw new NotFoundException(
+        'ไม่พบใบสั่งซื้อนี้',
+      );
+    }
+
+    /*
+     * ตรวจ Workflow Rules ก่อนบันทึก
+     * ไม่ผ่าน -> throw 400 พร้อมเหตุผล แล้วการ์ดไม่ถูกย้าย
+     */
+    if (order.orderPipelineId !== orderPipelineId) {
+      await this.workflowRulesService.assertMoveAllowed(
+        order,
+        order.orderPipelineId,
+        orderPipelineId,
+      );
+    }
 
     order.orderPipelineId = orderPipelineId;
 
@@ -203,7 +368,8 @@ export class IssueOrdersService {
   }
 
   async remove(id: number) {
-    const order = await this.findOne(id);
+    // เช็คว่ามีใบสั่งซื้อก่อนลบ (findOne จะ throw 404 ถ้าไม่พบ)
+    await this.findOne(id);
 
     /*
      * issue_order_detail มี ON DELETE CASCADE
@@ -306,6 +472,67 @@ export class IssueOrdersService {
       );
     }
   }
+
+  private async assertUserExists(userId: number) {
+    const exists =
+      await this.usersRepository.exists({
+        where: { userId },
+      });
+
+    if (!exists) {
+      throw new NotFoundException(
+        'ไม่พบผู้ใช้รายนี้',
+      );
+    }
+  }
+}
+
+/*
+ * คำนวณยอดเงินของใบสั่งซื้อตามลำดับ:
+ * - Subtotal       = ผลรวม (Qty × Unit Price)
+ * - Discount       = Subtotal × Discount (%)
+ * - After Discount = Subtotal - Discount
+ * - VAT            = After Discount × VAT (%)
+ * - Grand Total    = After Discount + VAT
+ */
+function computeTotals(
+  lines: { quantity: number; unitPrice: number }[],
+  discountPercent: number,
+  vatPercent: number,
+): {
+  subtotal: number;
+  discountAmount: number;
+  afterDiscount: number;
+  vatAmount: number;
+  grandTotal: number;
+} {
+  const subtotal = round2(
+    lines.reduce(
+      (sum, line) =>
+        sum + line.quantity * line.unitPrice,
+      0,
+    ),
+  );
+
+  const discountAmount = round2(
+    (subtotal * discountPercent) / 100,
+  );
+
+  const afterDiscount = round2(
+    subtotal - discountAmount,
+  );
+
+  const vatAmount = round2(
+    (afterDiscount * vatPercent) / 100,
+  );
+
+  return {
+    subtotal,
+    discountAmount,
+    afterDiscount,
+    vatAmount,
+    grandTotal: round2(afterDiscount + vatAmount),
+  };
 }
 
 /*

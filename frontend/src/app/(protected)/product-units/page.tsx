@@ -20,7 +20,6 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
-import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
@@ -40,7 +39,9 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import { api, getErrorMessage } from "@/lib/api";
+import { withQuery } from "@/lib/listQuery";
 import { useApi } from "@/lib/swr";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
@@ -65,6 +66,48 @@ export default function ProductUnitsPage() {
   });
 
   const [search, setSearch] = useState("");
+
+  /*
+   * หน่วงคำค้นแล้วให้ backend กรองให้
+   * base = ชุดเต็มไว้นับ "พบ X จาก Y รายการ"
+   */
+  const debouncedSearch = useDebouncedValue(
+    search,
+    300,
+  );
+
+  const baseUrl = useMemo(
+    () =>
+      ready && user ? "/api/products/units" : null,
+    [ready, user],
+  );
+
+  const listUrl = useMemo(
+    () =>
+      withQuery(baseUrl, { search: debouncedSearch }),
+    [baseUrl, debouncedSearch],
+  );
+
+  const {
+    data: allUnitsData,
+    isLoading: baseLoading,
+    mutate: reloadAll,
+  } = useApi<ProductUnit[]>(baseUrl);
+
+  const {
+    data: unitsData,
+    isLoading: listLoading,
+    error: loadError,
+    mutate: reloadUnits,
+  } = useApi<ProductUnit[]>(listUrl);
+
+  const loading = baseLoading || listLoading;
+
+  const units = useMemo(
+    () => allUnitsData ?? [],
+    [allUnitsData],
+  );
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] =
     useState<ProductUnit | null>(null);
@@ -92,35 +135,13 @@ export default function ProductUnitsPage() {
   const canManage =
     permissions?.productManagement === true;
 
-  const listUrl = useMemo(
-    () =>
-      ready && user ? "/api/products/units" : null,
-    [ready, user],
-  );
-
-  const {
-    data: unitsData,
-    isLoading: loading,
-    error: loadError,
-    mutate: reloadUnits,
-  } = useApi<ProductUnit[]>(listUrl);
-
-  const units = useMemo(
+  /*
+   * รายการที่ผ่านคำค้น — กรองจาก backend แล้ว
+   */
+  const filtered = useMemo(
     () => unitsData ?? [],
     [unitsData],
   );
-
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-
-    if (!keyword) {
-      return units;
-    }
-
-    return units.filter((unit) =>
-      unit.name.toLowerCase().includes(keyword),
-    );
-  }, [units, search]);
 
   useEffect(() => {
     if (!ready) return;
@@ -180,7 +201,10 @@ export default function ProductUnitsPage() {
       }
 
       setDialogOpen(false);
-      await reloadUnits();
+      await Promise.all([
+        reloadUnits(),
+        reloadAll(),
+      ]);
     } catch (err) {
       setFormError(
         getErrorMessage(err, t("unitSaveError")),
@@ -204,7 +228,10 @@ export default function ProductUnitsPage() {
 
       showNotice(t("unitDeleted"), "success");
       setDeleteTarget(null);
-      await reloadUnits();
+      await Promise.all([
+        reloadUnits(),
+        reloadAll(),
+      ]);
     } catch (err) {
       showNotice(
         getErrorMessage(err, t("unitDeleteError")),
@@ -490,12 +517,6 @@ export default function ProductUnitsPage() {
                       <TableCell sx={{ fontWeight: 800 }}>
                         {t("name")}
                       </TableCell>
-                      <TableCell
-                        align="right"
-                        sx={{ fontWeight: 800 }}
-                      >
-                        {t("productCount")}
-                      </TableCell>
                       {canManage && (
                         <TableCell
                           align="right"
@@ -520,21 +541,6 @@ export default function ProductUnitsPage() {
                           >
                             {unit.name}
                           </Typography>
-                        </TableCell>
-
-                        <TableCell align="right">
-                          <Chip
-                            size="small"
-                            label={
-                              unit.productCount ?? 0
-                            }
-                            sx={{
-                              borderRadius: "8px",
-                              fontWeight: 700,
-                              bgcolor: "#eef2f7",
-                              color: "#475569",
-                            }}
-                          />
                         </TableCell>
 
                         {canManage && (

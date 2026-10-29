@@ -13,6 +13,9 @@ out/
 # NestJS
 dist/
 
+# ไฟล์อัปโหลดของ backend (Workflow Rules / ไฟล์แนบใบสั่งซื้อ)
+uploads/
+
 # Logs
 *.log
 
