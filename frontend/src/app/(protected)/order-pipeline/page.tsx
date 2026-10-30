@@ -16,6 +16,7 @@ import Skeleton from "@mui/material/Skeleton";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 
 import AddIcon from "@mui/icons-material/Add";
@@ -33,9 +34,13 @@ import { withQuery } from "@/lib/listQuery";
 import { useApi } from "@/lib/swr";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import { useSession } from "@/lib/useSession";
+import { useAgingStatus } from "@/lib/useAgingStatus";
 import { formatMoney } from "@/lib/format";
 
+import type { AgingInfo } from "@/lib/useAgingStatus";
+
 import type {
+  AgingRule,
   Customer,
   IssueOrder,
   OrderPipelineStage,
@@ -51,11 +56,17 @@ import type {
 
 function OrderCard({
   order,
+  aging,
   dragging,
   ghost,
   onOpen,
 }: {
   order: IssueOrder;
+  /*
+   * สถานะอายุจาก Aging Rules (null = ยังไม่คำนวณ/ไม่มี rule)
+   * normal -> ปกติ, warning -> border+ป้ายเหลือง, critical -> border+ป้ายแดง
+   */
+  aging?: AgingInfo | null;
   dragging?: boolean;
   ghost?: boolean;
   onOpen: (order: IssueOrder) => void;
@@ -67,25 +78,53 @@ function OrderCard({
   const firstProduct = lines[0]?.product?.name ?? null;
   const stage = order.orderPipeline;
 
+  const aged = aging && aging.status !== "normal";
+
+  /*
+   * วันที่ activity อยู่ในอนาคต (ข้อมูลผิด)
+   * ระบบไม่ทาสีขอบและไม่นับอายุ แต่โชว์ป้ายเตือนสีส้มแทน
+   */
+  const futureWarning = aging?.invalidFuture === true;
+
+  /*
+   * สีขอบตามสถานะอายุ (Aging Rules)
+   * ปกติ = ขอบเทาเดิม / warning = เหลือง / critical = แดง
+   * ค่าสถานะชนะ hover เพราะต้องเห็นสีเต็ม ๆ เสมอ
+   */
+  const borderColor = !aging || aging.status === "normal"
+    ? "#e7ebf2"
+    : aging.status === "warning"
+      ? "#f59e0b"
+      : "#ef4444";
+
+  const hoverBorderColor = !aging || aging.status === "normal"
+    ? "#c7d2fe"
+    : borderColor;
+
   return (
     <Card
       data-testid="order-card"
       data-order-id={order.id}
+      data-aging-status={aging?.status ?? "normal"}
       sx={{
         p: 2,
         borderRadius: "12px",
-        border: "1px solid #e7ebf2",
+        border: aged
+          ? `2px solid ${borderColor}`
+          : "1px solid #e7ebf2",
         bgcolor: "#ffffff",
         boxShadow: dragging
           ? "0 12px 24px rgba(15,23,42,0.15)"
-          : "0 1px 3px rgba(15,23,42,0.04)",
+          : aged
+            ? `0 1px 3px ${borderColor}33`
+            : "0 1px 3px rgba(15,23,42,0.04)",
         cursor: "pointer",
         opacity: ghost ? 0 : 1,
         pointerEvents: ghost ? "none" : undefined,
         transition:
-          "box-shadow 150ms ease, opacity 150ms ease",
+          "box-shadow 150ms ease, opacity 150ms ease, border-color 150ms ease",
         "&:hover": {
-          borderColor: "#c7d2fe",
+          borderColor: hoverBorderColor,
           bgcolor: "#f8fafc",
           boxShadow:
             "0 4px 12px rgba(15,23,42,0.08)",
@@ -101,20 +140,79 @@ function OrderCard({
           gap: 1,
         }}
       >
-        <Typography
-          sx={{
-            px: 1,
-            py: 0.25,
-            borderRadius: "6px",
-            bgcolor: "#f1f5f9",
-            color: "#475569",
-            fontSize: 12,
-            fontWeight: 800,
-            lineHeight: 1.4,
-          }}
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{ alignItems: "center", minWidth: 0 }}
         >
-          #{order.id}
-        </Typography>
+          <Typography
+            sx={{
+              px: 1,
+              py: 0.25,
+              borderRadius: "6px",
+              bgcolor: "#f1f5f9",
+              color: "#475569",
+              fontSize: 12,
+              fontWeight: 800,
+              lineHeight: 1.4,
+            }}
+          >
+            #{order.id}
+          </Typography>
+
+          {futureWarning && (
+            <Tooltip title={t("agingFutureTooltip")}>
+              <Typography
+                sx={{
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: "6px",
+                  bgcolor: "#ffedd5",
+                  color: "#c2410c",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  lineHeight: 1.4,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {t("agingFutureWarning")}
+              </Typography>
+            </Tooltip>
+          )}
+
+          {aged && (
+            <Tooltip
+              title={t("agingTooltip", {
+                days: aging.days,
+                date: new Date(
+                  aging.since,
+                ).toLocaleString(locale),
+              })}
+            >
+              <Typography
+                sx={{
+                  px: 0.75,
+                  py: 0.25,
+                  borderRadius: "6px",
+                  bgcolor:
+                    aging.status === "warning"
+                      ? "#fef3c7"
+                      : "#fee2e2",
+                  color:
+                    aging.status === "warning"
+                      ? "#b45309"
+                      : "#b91c1c",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  lineHeight: 1.4,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {t("agingDays", { count: aging.days })}
+              </Typography>
+            </Tooltip>
+          )}
+        </Stack>
 
         <Typography
           sx={{
@@ -366,6 +464,24 @@ export default function OrderPipelinePage() {
   );
 
   /*
+   * Aging Rules (Time-based Workflow Rules) จากหน้า
+   * Administration -> Workflow Rules -> แท็บ Aging
+   * เก็บ Threshold ให้เปลี่ยนสีการ์ดเมื่อไม่มี activity
+   * อ่านได้ทุกคนที่ login (ไม่จำกัดสิทธิ์ administration)
+   *
+   * หน้านี้ refocus/refreshInterval เอง (override default ของ useApi)
+   * เพราะถ้า Admin แก้ Threshold ขณะบอร์ดเปิดค้างอยู่
+   * ต้องเห็นสีใหม่ทันทีโดยไม่ต้องกด Refresh หน้า
+   */
+  const { data: agingRulesData } = useApi<AgingRule[]>(
+    ready && user ? "/api/aging-rules" : null,
+    {
+      revalidateOnFocus: true,
+      refreshInterval: 60 * 1000,
+    },
+  );
+
+  /*
    * ดึงลูกค้า/สินค้าเฉพาะตอนเปิดฟอร์มเพิ่มใบสั่งซื้อ
    * เพื่อไม่ให้หน้านี้ยิง API เปล่า ๆ ทุกครั้งที่เข้า
    */
@@ -418,6 +534,19 @@ export default function OrderPipelinePage() {
     [ordersData],
   );
 
+  const agingRules = useMemo(
+    () => agingRulesData ?? [],
+    [agingRulesData],
+  );
+
+  /*
+   * สถานะอายุของทุกการ์ด (Map<orderId, AgingInfo>)
+   * คำนวณจาก last_activity_at เทียบกับ threshold ของ rule
+   * แล้วสุ่มคำนวณใหม่เองทุก 1 นาที/ตอนแท็บกลับมาแสดงผล
+   * -> การ์ดเปลี่ยน Day 3 -> Day 7 ได้โดยไม่ต้องกด Refresh
+   */
+  const agingMap = useAgingStatus(boardOrders, agingRules);
+
   /*
    * บันทึกขั้นตอนใหม่ของการ์ด
    * คอลัมน์บนบอร์ดเป็น stage_key แต่ API ต้องการ stage id
@@ -446,19 +575,18 @@ export default function OrderPipelinePage() {
 
         /*
          * ย้ายสำเร็จ -> เลิกติดตามการย้ายที่ถูกบล็อกไว้ก่อนหน้า
-         * (ปุ่มยืนยันในฟอร์มรายละเอียดก็ใช้เส้นทางนี้)
+         * (การย้ายอัตโนมัติจากฟอร์มรายละเอียดก็ใช้เส้นทางนี้)
          */
         setPendingMove(null);
 
         showNotice(t("stageUpdated"), "success");
       } catch (err) {
         /*
-         * ติด Workflow Rule ที่แก้ได้ด้วยการแนบไฟล์
-         * (attachment / document / payment)
-         * -> เปิดฟอร์มรายละเอียดพร้อมแถบ mark ว่าต้องแนบไฟล์อะไร
-         *
-         * กฎประเภท field (ต้องกรอกข้อมูล) แก้จากฟอร์มนี้ไม่ได้
-         * จึงแจ้งผ่าน Snackbar เหมือนเดิม
+         * ถูก Workflow Rule บล็อก (เงื่อนไขใดก็ได้:
+         * แนบไฟล์/เอกสาร/กรอกข้อมูล)
+         * -> เปิดฟอร์มรายละเอียด ให้เห็น inline error ใต้ field
+         * ที่เกี่ยวข้องว่าต้องทำอะไร แล้วระบบจะย้ายขั้นตอนให้เอง
+         * เมื่อผ่านครบ (ตราบใดที่ฟอร์มนี้ยังเปิดอยู่)
          */
         const unmetRules: WorkflowRuleCheck[] =
           getErrorCode(err) === "WORKFLOW_RULE_BLOCKED"
@@ -466,15 +594,11 @@ export default function OrderPipelinePage() {
                 ?.unmetRules ?? []
             : [];
 
-        const needsFile = unmetRules.some(
-          (rule) => rule.conditionType !== "field",
-        );
-
         const blockedOrder = orders.find(
           (item) => item.id === orderId,
         );
 
-        if (blockedOrder && needsFile) {
+        if (blockedOrder && unmetRules.length > 0) {
           setPendingMove({
             orderId: blockedOrder.id,
             toStageKey: stage.stageKey,
@@ -643,12 +767,13 @@ export default function OrderPipelinePage() {
     ): ReactNode => (
       <OrderCard
         order={order}
+        aging={agingMap.get(order.id) ?? null}
         ghost={state.ghost}
         dragging={state.dragging}
         onOpen={setActiveOrder}
       />
     ),
-    [],
+    [agingMap],
   );
 
   if (!user) {

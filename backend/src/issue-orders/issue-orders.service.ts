@@ -161,6 +161,11 @@ export class IssueOrdersService {
               discountPercent,
               vatPercent,
               note: dto.note ?? null,
+              /*
+               * จุดเริ่มต้นนับเวลา Aging Rules
+               * (DB มี DEFAULT now() อยู่แล้ว แต่เซ็ตตรง ๆ ให้ชัดเจน)
+               */
+              lastActivityAt: new Date(),
             }),
           );
 
@@ -322,6 +327,12 @@ export class IssueOrdersService {
       order.amount = totals.grandTotal;
     }
 
+    /*
+     * การแก้ไขข้อมูล = activity ใหม่ของบอร์ด
+     * -> reset timer ของ Aging Rules ให้นับใหม่จากตรงนี้
+     */
+    order.lastActivityAt = new Date();
+
     await this.ordersRepository.save(order);
 
     return this.findOne(id);
@@ -361,6 +372,12 @@ export class IssueOrdersService {
     }
 
     order.orderPipelineId = orderPipelineId;
+
+    /*
+     * การย้ายขั้นตอนเป็น activity ใหม่ -> reset timer ของ Aging Rules
+     * (การ์ดเริ่มนับ age ใหม่จากวินาทีที่ถูกลากไปขั้นตอนถัดไป)
+     */
+    order.lastActivityAt = new Date();
 
     await this.ordersRepository.save(order);
 

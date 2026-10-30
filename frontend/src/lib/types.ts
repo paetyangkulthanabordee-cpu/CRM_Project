@@ -207,6 +207,12 @@ export interface IssueOrder {
   discountPercent?: number;
   vatPercent?: number;
   note: string | null;
+
+  /*
+   * เวลาของกิจกรรมล่าสุดบนการ์ด (ย้ายขั้นตอน/แก้ไข/อัปโหลดไฟล์)
+   * จุดเริ่มต้นนับเวลาของ Aging Rules — ค่า null ให้ fallback ไป updatedAt
+   */
+  lastActivityAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -216,10 +222,23 @@ export interface IssueOrder {
  * ใช้ตอนตรวจ Workflow Rule ข้อ "ต้องแนบไฟล์"
  */
 export interface IssueOrderAttachment {
-  attachmentId: number;
+  /*
+   * ฝั่ง backend ส่งมา 2 แบบ:
+   * - GET /issue-orders ส่ง raw entity -> ใช้ field "id"
+   * - GET /issue-orders/:id/attachments ส่ง view -> ใช้ "attachmentId"
+   */
+  id?: number;
+  attachmentId?: number;
   originalName: string;
   mimeType: string;
   sizeBytes: number;
+
+  /*
+   * ประเภทเอกสารที่ผูกไว้ตอนอัปโหลด (เช่น Quotation/Invoice)
+   * null = ไฟล์ที่ไม่ได้ผูกประเภท — ใช้แสดงผลในแท็บเอกสารของลูกค้า
+   */
+  documentTypeId?: number | null;
+  uploadedBy?: number | null;
   createdAt: string;
 }
 
@@ -268,6 +287,24 @@ export interface WorkflowRule {
 }
 
 /*
+ * แถวหนึ่งในตาราง aging_rules (Time-based Workflow Rules)
+ * กำหนดวันที่เปลี่ยนสีการ์ด Kanban เมื่อไม่มี activity:
+ *   ไม่ถึง warningAfterDays  -> Normal (สีปกติ)
+ *   ถึง warningAfterDays     -> Warning (สีเหลือง)
+ *   ถึง criticalAfterDays    -> Critical (สีแดง)
+ * เปิด/ปิดรายละใบได้ผ่านหน้า Administration -> Workflow Rules
+ */
+export interface AgingRule {
+  ruleId: number;
+  ruleName: string;
+  warningAfterDays: number;
+  criticalAfterDays: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/*
  * ผลตรวจ Workflow Rule หนึ่งข้อของใบสั่งซื้อ
  * มาจาก 400 ตอนย้ายขั้นตอนถูกบล็อก (unmetRules)
  * และ GET /api/workflow-rules/check
@@ -279,6 +316,11 @@ export interface WorkflowRuleCheck {
   ruleId: number;
   ruleName: string;
   conditionType: WorkflowConditionType;
+  /*
+   * ฟิลด์ที่ rule ชนิด field เรียกร้อง (note/details/amount)
+   * null กับ rule ชนิดอื่น — ใช้วาง inline ใต้ field ที่ถูกต้อง
+   */
+  fieldKey?: string | null;
   met: boolean;
   requirementText: string;
   documentTypeId: number | null;
@@ -313,7 +355,8 @@ export interface WorkflowRuleBlockedError {
 
 /*
  * การย้ายขั้นตอนที่ถูกบล็อก — หน้าบอร์ดเก็บไว้แล้วส่งเข้า dialog
- * ให้แสดงแถบ mark "ต้องแนบไฟล์อะไร" และปุ่มยืนยันย้าย
+ * ให้แสดงแถบ mark "ต้องแนบไฟล์อะไร"
+ * แล้วระบบจะย้ายขั้นตอนให้อัตโนมัติเมื่อผ่านครบ
  */
 export interface PendingStageMove {
   orderId: number;

@@ -360,6 +360,18 @@ export class WorkflowRulesService {
       ruleId: rule.id,
       ruleName: rule.ruleName,
       conditionType: rule.conditionType,
+      /*
+       * ของ rule ชนิด field เท่านั้น (note/details/amount)
+       * ชนิดอื่น -> null
+       */
+      fieldKey:
+        rule.conditionType === 'field'
+          ? this.readConfigString(
+              rule.conditionConfig ?? {},
+              'field',
+              'note',
+            )
+          : null,
       requirementText: this.describeRequirement(rule),
     };
 

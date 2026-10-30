@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, DragEvent } from "react";
 
 import { useLocale, useTranslations } from "next-intl";
 
@@ -11,15 +11,16 @@ import { isAxiosError } from "axios";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CloseIcon from "@mui/icons-material/Close";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DownloadIcon from "@mui/icons-material/Download";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import ButtonBase from "@mui/material/ButtonBase";
+import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
@@ -39,13 +40,11 @@ import Typography from "@mui/material/Typography";
 
 import { api, getErrorMessage } from "@/lib/api";
 import { formatFileSize, formatMoney, round2 } from "@/lib/format";
-import { useApi } from "@/lib/swr";
 
 import FilePreviewDialog from "@/components/FilePreviewDialog";
 import SummaryRow from "@/components/SummaryRow";
 
 import type {
-  DocumentTypeItem,
   IssueOrder,
   IssueOrderAttachment,
   OrderPipelineStage,
@@ -80,7 +79,7 @@ interface Props {
   /*
    * การย้ายขั้นตอนที่ถูก Workflow Rule บล็อก (ส่งมาจากหน้าบอร์ด)
    * แสดงเป็นแถบ mark ในฟอร์มว่าต้องแนบไฟล์อะไร
-   * พอผ่านครบทุกข้อจะมีปุ่มยืนยันย้ายขั้นตอนให้กด
+   * พอผ่านครบทุกข้อ ระบบจะย้ายขั้นตอนให้อัตโนมัติ
    */
   pendingMove?: PendingStageMove | null;
 
@@ -98,11 +97,6 @@ export default function OrderDetailDialog({
   onClose,
 }: Props) {
   const t = useTranslations("orderPipeline");
-  /*
-   * ใช้เฉพาะ label ประเภทเอกสาร (docPurchaseOrder ฯลฯ)
-   * เพื่อไม่ต้องนิยามซ้ำใน namespace ของ orderPipeline
-   */
-  const tw = useTranslations("workflowRules");
   const locale = useLocale();
 
   /*
@@ -119,6 +113,21 @@ export default function OrderDetailDialog({
     useState(false);
 
   /* =====================================================
+     หมายเหตุ: แก้ไข/บันทึกได้ในฟอร์มเลย
+     (PATCH /api/issue-orders/:id — ใช้ตอน rule
+      "ต้องกรอกหมายเหตุ" บล็อกการย้ายขั้นตอนด้วย)
+  ===================================================== */
+
+  /* savedNote = ค่าล่าสุดที่บันทึกแล้ว (ใช้เทียบว่า draft เปลี่ยนไหม) */
+  const [savedNote, setSavedNote] = useState(
+    order.note ?? "",
+  );
+  const [noteDraft, setNoteDraft] = useState(
+    order.note ?? "",
+  );
+  const [savingNote, setSavingNote] = useState(false);
+
+  /* =====================================================
      ไฟล์แนบ (ใช้ตอนตรวจ Workflow Rule "ต้องแนบไฟล์")
   ===================================================== */
 
@@ -128,6 +137,9 @@ export default function OrderDetailDialog({
   const [attachmentsLoading, setAttachmentsLoading] =
     useState(true);
   const [uploading, setUploading] = useState(false);
+
+  /* สถานะไฟล์ลอยอยู่เหนือ dropzone (เปลี่ยนสีขอบ/พื้น) */
+  const [draggingOver, setDraggingOver] = useState(false);
   const [deleteAttachment, setDeleteAttachment] =
     useState<IssueOrderAttachment | null>(null);
   const [deletingAttachment, setDeletingAttachment] =
@@ -224,71 +236,138 @@ export default function OrderDetailDialog({
    */
 
   /* =====================================================
-     ประเภทเอกสารของไฟล์ที่กำลังจะอัปโหลด
-     (ส่งเป็น documentTypeId เพื่อให้ผ่าน rule ประเภท document)
+     แยก rule ตามชนิด + ค่าที่ระบบช่วยใส่ให้ตอนอัปโหลด
   ===================================================== */
 
-  const { data: docTypesData } =
-    useApi<DocumentTypeItem[]>("/api/document-types");
-
-  const docTypes = useMemo(
-    () => docTypesData ?? [],
-    [docTypesData],
-  );
-
   /*
-   * ค่าที่ rule กำหนดให้อัตโนมัติ:
-   * rule แรกที่ยังไม่ผ่านและเรียกร้องประเภทเอกสาร
-   * null = ไม่มี rule ประเภทนี้ -> ไม่บังคับต้องเลือก
+   * ประเภทเอกสารที่ rule ที่ยังไม่ผ่านเรียกร้อง (ถ้ามี)
+   * ระบบใส่ให้อัตโนมัติตอนอัปโหลดไฟล์ — ไม่มี UI ให้เลือกแล้ว
+   * เพื่อให้ rule ชนิด document/payment ตรวจพบไฟล์นี้
    */
-  const requiredDocTypeId =
+  const autoDocumentTypeId =
     ruleChecks.find(
       (item) => !item.met && item.documentTypeId !== null,
     )?.documentTypeId ?? null;
 
-  /*
-   * ค่าที่ผู้ใช้เลือกเอง ผูกกับเส้นทางการย้าย (targetKey)
-   * เปลี่ยนเป้าหมาย -> กลับไปใช้ค่าที่ rule กำหนดใหม่
-   * null = ยังไม่เคยเลือกเอง
-   */
-  const [uploadDocTypeChoice, setUploadDocTypeChoice] =
-    useState<{
-      targetKey: string;
-      value: number | "";
-    } | null>(null);
-
-  const uploadDocTypeId: number | "" =
-    uploadDocTypeChoice !== null &&
-    uploadDocTypeChoice.targetKey === targetKey
-      ? uploadDocTypeChoice.value
-      : (requiredDocTypeId ?? "");
+  /* ทุกข้อผ่านแล้ว -> effect ข้างล่างจะย้ายขั้นตอนให้อัตโนมัติ */
+  const rulesAllMet = ruleChecks.every((item) => item.met);
 
   /*
-   * label ของ document_type ให้ตรงกับหน้า Workflow Rules
-   * ค่าที่ไม่ใช่ 4 แบบมาตรฐาน (type ที่เพิ่มเอง) แสดง key ตรง ๆ
+   * rule ที่ไม่ผูกกับ field ใด ๆ (ชนิดแนบไฟล์ ทั้งหมด
+   * รวมชนิด field ที่ไม่รู้ตำแหน่ง กันข้อความหาย)
+   * -> แสดง inline ในส่วน "ไฟล์แนบ"
    */
-  function docTypeLabel(key: string) {
-    if (key === "quotation") {
-      return tw("docQuotation");
+  const attachmentInlineRules = ruleChecks.filter(
+    (item) =>
+      item.conditionType !== "field" ||
+      !["note", "details", "amount"].includes(
+        item.fieldKey ?? "",
+      ),
+  );
+
+  /*
+   * mark ที่ตัวกล่อง dropzone: เปลี่ยน "สีเส้นปะ" เท่านั้น
+   * แดงเมื่อ rule กลุ่มไฟล์ยังไม่ผ่าน (rule ชนิด field ไม่เกี่ยวกับไฟล์
+   * -> ไม่ทำให้กล่องแดง), เขียวเมื่อผ่านครบ, น้ำเงินตอนลากไฟล์มาวาง
+   * พื้นหลัง/ไอคอน/ข้อความ ไม่เปลี่ยนสีตาม
+   */
+  const dropzoneError =
+    activePendingMove !== null &&
+    attachmentInlineRules.some((item) => !item.met);
+
+  const dropzoneSuccess =
+    activePendingMove !== null && rulesAllMet;
+
+  const dropzoneBorder = draggingOver
+    ? "#2563eb"
+    : dropzoneError
+      ? "#dc2626"
+      : dropzoneSuccess
+        ? "#16a34a"
+        : "#cbd5e1";
+
+  /* rule ชนิด field -> ใต้ field ที่เกี่ยวข้อง (note/details/amount) */
+  function fieldRule(key: string) {
+    if (!activePendingMove) {
+      return null;
     }
 
-    if (key === "invoice") {
-      return tw("docInvoice");
-    }
-
-    if (key === "receipt") {
-      return tw("docReceipt");
-    }
-
-    if (key === "purchase_order") {
-      return tw("docPurchaseOrder");
-    }
-
-    return key;
+    return (
+      ruleChecks.find(
+        (item) =>
+          item.conditionType === "field" &&
+          item.fieldKey === key,
+      ) ?? null
+    );
   }
 
-  /* ทุกข้อผ่านแล้ว -> โชว์ปุ่มยืนยันย้ายขั้นตอน */
-  const rulesAllMet = ruleChecks.every((item) => item.met);
+  /*
+   * แถว rule หนึ่งข้อ: ไอคอน ✅/⚠ + ข้อความ
+   * แดงเมื่อยังไม่ผ่าน / เขียวเมื่อผ่าน
+   * ไม่มีกรอบ ไม่มีพื้นหลัง — ตามแนว inline form error
+   */
+  function renderRuleLine(rule: WorkflowRuleCheck) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          gap: 0.75,
+          alignItems: "flex-start",
+        }}
+      >
+        {rule.met ? (
+          <CheckCircleIcon
+            sx={{
+              fontSize: 16,
+              color: "#16a34a",
+              mt: "2px",
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <WarningAmberIcon
+            sx={{
+              fontSize: 16,
+              color: "#dc2626",
+              mt: "2px",
+              flexShrink: 0,
+            }}
+          />
+        )}
+
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              color: rule.met ? "#16a34a" : "#dc2626",
+              fontWeight: rule.met ? 400 : 600,
+              lineHeight: 1.5,
+              wordBreak: "break-word",
+            }}
+          >
+            {rule.requirementText}
+          </Typography>
+
+          {(rule.requiredCount > 1 ||
+            rule.currentCount > 0) && (
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                color: rule.met ? "#16a34a" : "#94a3b8",
+              }}
+            >
+              {t("ruleProgress", {
+                current: rule.currentCount,
+                required: rule.requiredCount,
+              })}
+            </Typography>
+          )}
+        </Box>
+      </Box>
+    );
+  }
 
   /*
    * โหลดรายการไฟล์เองทุกครั้งที่เปิด dialog
@@ -338,18 +417,7 @@ export default function OrderDetailDialog({
     }
   }
 
-  async function handleUpload(
-    event: ChangeEvent<HTMLInputElement>,
-  ) {
-    const file = event.target.files?.[0];
-
-    // รีเซ็ตค่าเพื่อให้เลือกไฟล์เดิมซ้ำได้หลังอัปโหลด
-    event.target.value = "";
-
-    if (!file) {
-      return;
-    }
-
+  async function uploadFile(file: File) {
     setUploading(true);
     setAttachmentNotice("");
 
@@ -358,14 +426,14 @@ export default function OrderDetailDialog({
       formData.append("file", file);
 
       /*
-       * ประเภทเอกสารที่ผู้ใช้เลือก (หรือที่ระบบเลือกให้จาก rule ที่ยังไม่ผ่าน)
-       * ส่งไปเป็น documentTypeId เพื่อให้ rule ประเภท document/payment
-       * ตรวจพบไฟล์นี้ — ไม่ส่งก็ได้ (เป็นไฟล์แนบประเภททั่วไป)
+       * ประเภทเอกสารที่ rule ที่ยังไม่ผ่านเรียกร้อง
+       * -> ระบบใส่ให้เองเงียบ ๆ (ไม่มี UI ให้เลือกแล้ว)
+       * ถ้าไม่มี rule ค้างอยู่จะไม่ส่ง -> เป็นไฟล์แนบประเภททั่วไป
        */
-      if (uploadDocTypeId !== "") {
+      if (autoDocumentTypeId !== null) {
         formData.append(
           "documentTypeId",
-          String(uploadDocTypeId),
+          String(autoDocumentTypeId),
         );
       }
 
@@ -380,7 +448,8 @@ export default function OrderDetailDialog({
 
       /*
        * อัปโหลดสำเร็จ -> เช็ก rule ใหม่ทันที
-       * ให้แถบ mark เปลี่ยนเป็น ✅ และโชว์ปุ่มยืนยันย้ายเมื่อผ่านครบ
+       * ให้แถบ mark เปลี่ยนเป็น ✅ และเมื่อผ่านครบ
+       * ระบบจะย้ายขั้นตอนให้อัตโนมัติเอง
        */
       await reloadRuleChecks();
     } catch (err) {
@@ -402,6 +471,40 @@ export default function OrderDetailDialog({
     } finally {
       setUploading(false);
     }
+  }
+
+  /* เลือกไฟล์จาก input ที่ซ่อนอยู่ -> ใช้ logic อัปโหลดเดียวกับการลากวาง */
+  async function handleUpload(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+
+    // รีเซ็ตค่าเพื่อให้เลือกไฟล์เดิมซ้ำได้หลังอัปโหลด
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    await uploadFile(file);
+  }
+
+  /* วางไฟล์ลงบน dropzone -> อัปโหลดทันที */
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDraggingOver(false);
+
+    if (uploading) {
+      return;
+    }
+
+    const file = event.dataTransfer.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    void uploadFile(file);
   }
 
   async function handleDownload(
@@ -463,50 +566,134 @@ export default function OrderDetailDialog({
     }
   }
 
-  async function handleStageChange(
-    nextStageKey: string,
-  ) {
-    if (!nextStageKey || nextStageKey === stageKey) {
-      return;
-    }
+  /*
+   * บันทึกขั้นตอนใหม่ — ใช้ทั้งตอนผู้ใช้เลือกจาก dropdown
+   * และตอนระบบย้ายขั้นตอนให้อัตโนมัติเมื่อผ่าน rule ครบ
+   * คืนค่า true เมื่อบันทึกสำเร็จ (ให้ฝั่งย้ายอัตโนมัติใช้ปิดฟอร์ม)
+   */
+  const handleStageChange = useCallback(
+    async (nextStageKey: string): Promise<boolean> => {
+      if (!nextStageKey || nextStageKey === stageKey) {
+        return false;
+      }
 
-    setStageKey(nextStageKey);
-    setSavingStage(true);
+      setStageKey(nextStageKey);
+      setSavingStage(true);
 
-    const saved = await onStageChange(
-      order.id,
-      nextStageKey,
-    );
-
-    /*
-     * บันทึกไม่สำเร็จ -> ดีดขั้นตอนกลับเป็นค่าเดิม
-     * แล้วให้ notice จากฝั่ง page เป็นคนแจ้งสาเหตุ
-     */
-    if (!saved) {
-      setStageKey(
-        order.orderPipeline?.stageKey ?? "",
+      const saved = await onStageChange(
+        order.id,
+        nextStageKey,
       );
 
-      // ย้ายไม่ได้ -> อัปเดตแถบ mark ว่าตอนนี้ยังขาดอะไรอยู่
-      void reloadRuleChecks();
-    }
+      /*
+       * บันทึกไม่สำเร็จ -> ดีดขั้นตอนกลับเป็นค่าเดิม
+       * แล้วให้ notice จากฝั่ง page เป็นคนแจ้งสาเหตุ
+       */
+      if (!saved) {
+        setStageKey(
+          order.orderPipeline?.stageKey ?? "",
+        );
 
-    setSavingStage(false);
-  }
+        // ย้ายไม่ได้ -> อัปเดตแถบ mark ว่าตอนนี้ยังขาดอะไรอยู่
+        void reloadRuleChecks();
+      }
+
+      setSavingStage(false);
+
+      return saved;
+    },
+    [
+      stageKey,
+      onStageChange,
+      order.id,
+      order.orderPipeline?.stageKey,
+      reloadRuleChecks,
+    ],
+  );
 
   /*
-   * ปุ่ม "ย้ายไป {ขั้นตอน} เลย" ในแถบ mark
-   * เรียกกลไกเดียวกับการเลือก Change stage
-   * (ผ่าน rule ครบแล้วจึงต้องย้ายสำเร็จ)
+   * ย้ายขั้นตอนอัตโนมัติ: พอผ่าน Workflow Rule ครบทุกข้อ
+   * ให้ย้ายให้เลยแทนที่จะมีแถบแจ้ง/ปุ่มยืนยันให้กด
+   * แล้วย้ายสำเร็จ -> ปิดฟอร์มรายละเอียดให้เองด้วย
+   *
+   * autoMovedKeyRef กันย้ำยิง: เก็บรหัส "ใบสั่งซื้อ:ขั้นตอนเป้าหมาย"
+   * ที่เพิ่งย้ายไปแล้ว 1 ครั้ง — จะยิงอีกได้ก็ต่อเมื่อกฎเปลี่ยน
+   * จากยังไม่ผ่าน -> ผ่าน (ref ถูกล้างในตอนที่ rulesAllMet เป็น false)
+   * เช่น ย้ายไม่สำเร็จแล้วserverคืนกฎที่ยังขาดอยู่ใหม่
+   *
+   * ถ้าตอนย้ายสำเร็จมี preview ไฟล์/กล่องยืนยันลบไฟล์เปิดอยู่
+   * ให้ข้ามการปิด (ขั้นตอนย้ายไปแล้ว ผู้ใช้กดปิดเอง) จะได้ไม่ดึงหน้าต่าง
+   * ที่กำลังเปิดดูอยู่ให้ปิดหายไปด้วย
    */
-  async function confirmPendingMove() {
-    if (!activePendingMove) {
+  const autoMovedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!activePendingMove || ruleChecks.length === 0) {
       return;
     }
 
-    await handleStageChange(
+    if (!rulesAllMet) {
+      autoMovedKeyRef.current = null;
+      return;
+    }
+
+    if (autoMovedKeyRef.current === targetKey) {
+      return;
+    }
+
+    autoMovedKeyRef.current = targetKey;
+
+    void handleStageChange(
       activePendingMove.toStageKey,
-    );
+    ).then((saved) => {
+      if (saved && !previewAttachment && !deleteAttachment) {
+        onClose();
+      }
+    });
+  }, [
+    activePendingMove,
+    ruleChecks.length,
+    rulesAllMet,
+    targetKey,
+    handleStageChange,
+    previewAttachment,
+    deleteAttachment,
+    onClose,
+  ]);
+
+  /*
+   * บันทึกหมายเหตุ — backend รับ PATCH {note} อยู่แล้ว
+   * สำเร็จ -> ปรับค่าอ้างอิง แจ้งบอร์ด refresh
+   * แล้วเช็ก rule ใหม่ (rule "ต้องกรอกหมายเหตุ" อาจผ่านทันที)
+   */
+  async function handleSaveNote() {
+    const next = noteDraft.trim();
+
+    setSavingNote(true);
+
+    try {
+      await api.patch(`/api/issue-orders/${order.id}`, {
+        note: next,
+      });
+
+      setSavedNote(next);
+      setNoteDraft(next);
+
+      setAttachmentNotice(t("noteSaved"));
+      setAttachmentNoticeType("success");
+
+      // หน้าบอร์ด reload -> การ์ดก็แสดง note ล่าสุดด้วย
+      onAttachmentsChange?.();
+
+      await reloadRuleChecks();
+    } catch (err) {
+      setAttachmentNotice(
+        getErrorMessage(err, t("noteSaveError")),
+      );
+      setAttachmentNoticeType("error");
+    } finally {
+      setSavingNote(false);
+    }
   }
 
   async function handleDelete() {
@@ -549,6 +736,14 @@ export default function OrderDetailDialog({
   const grandTotal = round2(
     afterDiscount + vatAmount,
   );
+
+  /*
+   * rule ชนิด field ที่ต้องวาง inline ใต้ field ของตัวเอง
+   * null = ไม่มี rule ชนิดนี้ หรือไม่ได้อยู่ในสถานะถูกบล็อก
+   */
+  const noteRule = fieldRule("note");
+  const detailsRule = fieldRule("details");
+  const amountRule = fieldRule("amount");
 
   return (
     <Dialog
@@ -602,126 +797,6 @@ export default function OrderDetailDialog({
 
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
-          {/*
-            แถบ mark: สาเหตุที่ย้ายขั้นตอนไม่ได้ + สิ่งที่ต้องทำ
-            แสดงเมื่อการย้ายถูก Workflow Rule บล็อก (ยังไม่ได้แนบไฟล์)
-            พอทุกข้อผ่าน -> เปลี่ยนเป็นสีเขียวพร้อมปุ่มยืนยันย้าย
-          */}
-          {activePendingMove && (
-            <Alert
-              severity={rulesAllMet ? "success" : "warning"}
-              variant="outlined"
-              sx={{ borderRadius: "10px" }}
-              action={
-                rulesAllMet ? (
-                  <Button
-                    size="small"
-                    variant="contained"
-                    disabled={savingStage}
-                    onClick={() =>
-                      void confirmPendingMove()
-                    }
-                    sx={{
-                      textTransform: "none",
-                      fontWeight: 700,
-                      whiteSpace: "nowrap",
-                      bgcolor: "#2563eb",
-                      "&:hover": { bgcolor: "#1d4ed8" },
-                    }}
-                  >
-                    {t("confirmMove", {
-                      stage:
-                        activePendingMove.toStageLabel,
-                    })}
-                  </Button>
-                ) : undefined
-              }
-            >
-              <Typography
-                sx={{
-                  fontWeight: 800,
-                  fontSize: 14,
-                  color:
-                    rulesAllMet ? "#15803d" : "#b45309",
-                }}
-              >
-                {rulesAllMet
-                  ? t("rulesPassedTitle")
-                  : t("blockedMoveTitle", {
-                      stage:
-                        activePendingMove.toStageLabel,
-                    })}
-              </Typography>
-
-              <Stack
-                spacing={0.75}
-                sx={{ mt: 0.75 }}
-              >
-                {ruleChecks.map((rule) => (
-                  <Box
-                    key={rule.ruleId}
-                    sx={{
-                      display: "flex",
-                      gap: 1,
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    {rule.met ? (
-                      <CheckCircleIcon
-                        sx={{
-                          fontSize: 18,
-                          color: "#16a34a",
-                          mt: "2px",
-                          flexShrink: 0,
-                        }}
-                      />
-                    ) : (
-                      <WarningAmberIcon
-                        sx={{
-                          fontSize: 18,
-                          color: "#f59e0b",
-                          mt: "2px",
-                          flexShrink: 0,
-                        }}
-                      />
-                    )}
-
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          color: "#172033",
-                          fontWeight: rule.met ? 400 : 600,
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {rule.requirementText}
-                      </Typography>
-
-                      {(rule.requiredCount > 1 ||
-                        rule.currentCount > 0) && (
-                        <Typography
-                          variant="caption"
-                          sx={{
-                            display: "block",
-                            color: rule.met
-                              ? "#16a34a"
-                              : "#94a3b8",
-                          }}
-                        >
-                          {t("ruleProgress", {
-                            current: rule.currentCount,
-                            required: rule.requiredCount,
-                          })}
-                        </Typography>
-                      )}
-                    </Box>
-                  </Box>
-                ))}
-              </Stack>
-            </Alert>
-          )}
-
           <Box
             sx={{
               display: "grid",
@@ -905,6 +980,13 @@ export default function OrderDetailDialog({
                 )}
               </TableBody>
             </Table>
+
+            {/* inline rule: ต้องกรอก "รายการสินค้า" */}
+            {detailsRule && (
+              <Box sx={{ mt: 1 }}>
+                {renderRuleLine(detailsRule)}
+              </Box>
+            )}
           </Box>
 
           {/* ---- สรุปยอด: ส่วนลด / VAT / ยอดรวมสุทธิ ---- */}
@@ -955,108 +1037,135 @@ export default function OrderDetailDialog({
             />
           </Box>
 
+          {/* inline rule: ต้องกรอก "ยอดเงิน" */}
+          {amountRule && (
+            <Box>{renderRuleLine(amountRule)}</Box>
+          )}
+
           {/* ---- ไฟล์แนบ ---- */}
           <Box>
-            <Stack
-              direction="row"
-              spacing={1}
+            <Typography
               sx={{
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                rowGap: 1,
+                fontWeight: 700,
+                fontSize: 14,
+                color: "#172033",
               }}
             >
-              <Typography
-                sx={{
-                  fontWeight: 700,
-                  fontSize: 14,
-                  color: "#172033",
-                }}
-              >
-                {t("attachments")}
-              </Typography>
-
-              <Stack
-                direction="row"
-                spacing={1}
-                sx={{
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  rowGap: 1,
-                }}
-              >
-                {/*
-                  ประเภทเอกสารของไฟล์ที่จะอัปโหลด
-                  ค่าเริ่มต้นถูกเลือกจาก rule ที่ยังไม่ผ่าน (ถ้ามี)
-                  เพื่อให้อัปโหลดเสร็จแล้วผ่าน rule ทันที
-                */}
-                <TextField
-                  select
-                  size="small"
-                  label={t("docTypeLabel")}
-                  value={uploadDocTypeId}
-                  disabled={
-                    uploading || deletingAttachment
-                  }
-                  onChange={(event) => {
-                    const next = event.target.value;
-
-                    setUploadDocTypeChoice({
-                      targetKey,
-                      value:
-                        next === "" ? "" : Number(next),
-                    });
-                  }}
-                  slotProps={{
-                    inputLabel: { shrink: true },
-                  }}
-                  sx={{
-                    minWidth: 170,
-                    "& .MuiOutlinedInput-root": {
-                      borderRadius: "8px",
-                    },
-                  }}
-                >
-                  <MenuItem value="">
-                    {t("docTypeNone")}
-                  </MenuItem>
-
-                  {docTypes.map((item) => (
-                    <MenuItem
-                      key={item.id}
-                      value={item.id}
-                    >
-                      {docTypeLabel(item.documentType)}
-                    </MenuItem>
-                  ))}
-                </TextField>
-
-                <Button
-                  size="small"
-                  startIcon={
-                    <UploadFileIcon fontSize="small" />
-                  }
-                  disabled={
-                    uploading || deletingAttachment
-                  }
-                  onClick={() =>
-                    fileInputRef.current?.click()
-                  }
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: 700,
-                  }}
-                >
-                  {uploading
-                    ? t("uploading")
-                    : t("addAttachment")}
-                </Button>
-              </Stack>
-            </Stack>
+              {t("attachments")}
+            </Typography>
 
             {/*
-              input ซ่อนไว้แล้วเรียกด้วยปุ่มด้านบน
+              dropzone: ลากวางหรือคลิก "เลือกไฟล์"
+              ทุกทางผ่าน uploadFile() เดียวกัน
+              (ได้ documentTypeId อัตโนมัติเมื่อมี rule ค้างอยู่)
+            */}
+            <Box
+              role="button"
+              tabIndex={
+                uploading || deletingAttachment ? -1 : 0
+              }
+              aria-label={t("chooseFile")}
+              onClick={() => {
+                if (!uploading && !deletingAttachment) {
+                  fileInputRef.current?.click();
+                }
+              }}
+              onKeyDown={(event) => {
+                if (
+                  (event.key === "Enter" ||
+                    event.key === " ") &&
+                  !uploading &&
+                  !deletingAttachment
+                ) {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+
+                if (!uploading) {
+                  setDraggingOver(true);
+                }
+              }}
+              onDragLeave={() => setDraggingOver(false)}
+              onDrop={handleDrop}
+              sx={{
+                mt: 1,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 0.75,
+                py: 3,
+                px: 2,
+                borderRadius: "10px",
+                border: "1px dashed",
+                borderColor: dropzoneBorder,
+                bgcolor: "#fafcff",
+                cursor: uploading ? "default" : "pointer",
+                outline: "none",
+                transition: "border-color 120ms ease",
+                "&:hover": uploading
+                  ? undefined
+                  : { borderColor: "#2563eb" },
+                "&:focus-visible": {
+                  borderColor: "#2563eb",
+                  boxShadow:
+                    "0 0 0 3px rgba(37,99,235,0.15)",
+                },
+              }}
+            >
+              {uploading ? (
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ alignItems: "center" }}
+                >
+                  <CircularProgress size={16} />
+
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: "#64748b",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {t("uploading")}
+                  </Typography>
+                </Stack>
+              ) : (
+                <>
+                  <CloudUploadIcon
+                    sx={{
+                      fontSize: 34,
+                      color: "#94a3b8",
+                    }}
+                  />
+
+                  <Typography
+                    variant="body2"
+                    sx={{ color: "#64748b" }}
+                  >
+                    {t("dropzoneHint")}{" "}
+                    <Box
+                      component="span"
+                      sx={{
+                        color: "#2563eb",
+                        fontWeight: 700,
+                        textDecoration: "underline",
+                        "&:hover": { color: "#1d4ed8" },
+                      }}
+                    >
+                      {t("chooseFile")}
+                    </Box>
+                  </Typography>
+                </>
+              )}
+            </Box>
+
+            {/*
+              input ซ่อนไว้ — เรียกด้วยการคลิกกล่อง/"เลือกไฟล์" ด้านบน
               accept ตรงกับชนิดไฟล์ที่ backend อนุญาต
             */}
             <input
@@ -1069,16 +1178,34 @@ export default function OrderDetailDialog({
               }
             />
 
-            <Typography
-              variant="caption"
-              sx={{
-                display: "block",
-                mt: 0.5,
-                color: "#94a3b8",
-              }}
-            >
-              {t("attachmentsHint")}
-            </Typography>
+            {/*
+              inline error (ไม่มีกรอบ ไม่มีพื้นหลัง):
+              สาเหตุที่ย้ายขั้นตอนไม่ได้ + สิ่งที่ต้องแนบ
+              แสดงแทน captionปกติเฉพาะตอนถูก Workflow Rule บล็อก
+              (เมื่อผ่านครบแล้วระบบย้ายขั้นตอนให้อัตโนมัติ
+               จึงไม่มีแถบแจ้ง/ปุ่มยืนยันตรงนี้อีก)
+            */}
+            {activePendingMove &&
+            attachmentInlineRules.length > 0 ? (
+              <Stack spacing={0.5} sx={{ mt: 0.75 }}>
+                {attachmentInlineRules.map((rule) => (
+                  <Box key={rule.ruleId}>
+                    {renderRuleLine(rule)}
+                  </Box>
+                ))}
+              </Stack>
+            ) : (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  mt: 0.5,
+                  color: "#94a3b8",
+                }}
+              >
+                {t("attachmentsHint")}
+              </Typography>
+            )}
 
             {!attachmentsLoading &&
               attachments.length === 0 && (
@@ -1276,14 +1403,73 @@ export default function OrderDetailDialog({
               {t("note")}
             </Typography>
 
-            <Typography
+            {/*
+              แก้ไขได้ในฟอร์มเลย — ใช้ตอน rule "ต้องกรอกหมายเหตุ"
+              บล็อกการย้ายขั้นตอนด้วย (พิมพ์แล้วกดบันทึก -> rule ผ่าน)
+            */}
+            <TextField
+              fullWidth
+              multiline
+              minRows={2}
+              size="small"
+              value={noteDraft}
+              placeholder={t("noNote")}
+              disabled={savingNote}
+              onChange={(event) =>
+                setNoteDraft(event.target.value)
+              }
               sx={{
-                mt: 0.25,
-                color: order.note ? "#172033" : "#94a3b8",
+                mt: 0.5,
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: "8px",
+                  bgcolor: "#ffffff",
+                },
               }}
-            >
-              {order.note || t("noNote")}
-            </Typography>
+            />
+
+            {noteDraft !== savedNote && (
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ mt: 1, alignItems: "center" }}
+              >
+                <Button
+                  size="small"
+                  variant="contained"
+                  disabled={savingNote}
+                  onClick={() => void handleSaveNote()}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 700,
+                    bgcolor: "#2563eb",
+                    "&:hover": { bgcolor: "#1d4ed8" },
+                  }}
+                >
+                  {savingNote
+                    ? t("savingNote")
+                    : t("saveNote")}
+                </Button>
+
+                <Button
+                  size="small"
+                  disabled={savingNote}
+                  onClick={() => setNoteDraft(savedNote)}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 700,
+                  }}
+                >
+                  {t("cancel")}
+                </Button>
+              </Stack>
+            )}
+
+            {/* inline rule: ต้องกรอก "หมายเหตุ" */}
+            {noteRule && (
+              <Box sx={{ mt: 1 }}>
+                {renderRuleLine(noteRule)}
+              </Box>
+            )}
           </Box>
 
           {confirmingDelete && (

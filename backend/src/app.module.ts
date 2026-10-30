@@ -22,6 +22,7 @@ import { ProductsModule } from './products/products.module.js';
 import { OrderPipelineModule } from './order-pipeline/order-pipeline.module.js';
 import { IssueOrdersModule } from './issue-orders/issue-orders.module.js';
 import { WorkflowRulesModule } from './workflow-rules/workflow-rules.module.js';
+import { AgingRulesModule } from './aging-rules/aging-rules.module.js';
 
 const requiredEnvVars = [
   'DATABASE_HOST',
@@ -72,6 +73,7 @@ if (missingEnvVars.length > 0) {
     OrderPipelineModule,
     IssueOrdersModule,
     WorkflowRulesModule,
+    AgingRulesModule,
   ],
 
   controllers: [AppController],

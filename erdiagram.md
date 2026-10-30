@@ -95,6 +95,7 @@ erDiagram
         INT user_id FK "ผู้รับผิดชอบ (assignee), nullable"
         DECIMAL15_2 amount
         TEXT note
+        TIMESTAMPTZ last_activity_at "กิจกรรมล่าสุด = จุดเริ่มต้นนับอายุการ์ด (Aging Rules), nullable"
     }
 
     issue_order_detail {
@@ -127,6 +128,16 @@ erDiagram
         INT uploaded_by FK "-> users.user_id (คนแนบไฟล์), nullable"
         INT document_type_id FK "-> document_type.id, nullable"
         TIMESTAMPTZ created_at
+    }
+
+    aging_rules {
+        SERIAL id PK
+        VARCHAR150 rule_name
+        INT warning_after_days "ไม่มี activity ครบกำหนด -> การ์ดสีเหลือง"
+        INT critical_after_days "ไม่มี activity ครบกำหนด -> การ์ดสีแดง (ต้อง > warning)"
+        BOOLEAN is_active "ปิดอยู่จะไม่นำไปคิดสีการ์ด"
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
 
     users ||--o{ customers : "assigned_id"
@@ -203,8 +214,9 @@ erDiagram
 
 ### `issue_order`
 
-ตารางใบสั่งซื้อ เก็บ id, customer_id (ลูกค้า), order_pipeline_id (ขั้นตอน), user_id (ผู้รับผิดชอบ/assignee), amount (ยอดรวม) และ note
+ตารางใบสั่งซื้อ เก็บ id, customer_id (ลูกค้า), order_pipeline_id (ขั้นตอน), user_id (ผู้รับผิดชอบ/assignee), amount (ยอดรวม), note และ `last_activity_at` (เวลาของกิจกรรมล่าสุด)
 - `user_id` nullable: ข้อมูลเดิมเป็น NULL / ลบ user แล้วค่ากลายเป็น NULL (ON DELETE SET NULL)
+- `last_activity_at` = จุดเริ่มต้นนับอายุการ์ดของ Aging Rules — ถูกอัปเดตเป็นเวลาปัจจุบัน (reset timer) ทุกครั้งที่มีกิจกรรม: ย้ายขั้นตอน / แก้ไขข้อมูล / อัปโหลดไฟล์ (ค่า NULL ให้ fallback ไป `updated_at`)
 
 ### `issue_order_detail`
 
@@ -218,6 +230,14 @@ erDiagram
 - `document_type_id` nullable: ใช้เฉพาะ rule ประเภท `document` (rule อื่นเป็น NULL), ลบ `document_type` แล้วกลายเป็น NULL (ON DELETE SET NULL)
 - `condition_config.docType` (string) เก็บไว้เป็น fallback เท่านั้น — แหล่งความจริงคือคอลัมน์ `document_type_id`
 - เมื่อลบขั้นตอนใน `order_pipeline` rule ของขั้นตอนนั้นจะถูกลบตาม (ON DELETE CASCADE)
+
+### `aging_rules`
+
+ตาราง Time-based Workflow Rules (Aging Rules) — เก็บ Threshold ที่ Admin กำหนดเอง เพื่อเปลี่ยนสีการ์ด Kanban เมื่อไม่มี activity ตามจำนวนวันที่กำหนด แยกจาก `workflow_rules` เพราะไม่มีคู่ From/To Stage
+- `warning_after_days` = จำนวนวันที่เริ่มแสดงสีเหลือง (Warning) / `critical_after_days` = จำนวนวันที่เปลี่ยนเป็นสีแดง (Overdue/Critical)
+- CHECK constraint: `critical_after_days > warning_after_days >= 1`
+- `is_active` = เปิด/ปิด rule รายละใบได้โดยไม่ต้องลบ
+- ไม่มี FK ไปตารางอื่น: บอร์ดฝั่ง frontend ดึง Threshold ผ่าน `GET /api/aging-rules` แล้วคำนวณสถานะจาก `issue_order.last_activity_at` เอง (คำนวณใหม่ทุก ~1 นาที ไม่ต้องกด Refresh)
 
 ### `issue_order_attachment`
 

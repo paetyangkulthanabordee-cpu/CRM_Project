@@ -143,6 +143,11 @@ export interface WorkflowRuleEvaluation {
   ruleId: number;
   ruleName: string;
   conditionType: WorkflowConditionType;
+  /*
+   * ฟิลด์ที่ rule ชนิด field เรียกร้อง (note/details/amount)
+   * null สำหรับ rule ชนิดอื่น — หน้ารายละเอียดใช้วาง inline ใต้ field ที่ถูกต้อง
+   */
+  fieldKey: string | null;
   met: boolean;
   requirementText: string;
   documentTypeId: number | null;

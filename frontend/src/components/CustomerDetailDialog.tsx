@@ -4,6 +4,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 
@@ -36,9 +37,11 @@ import EventIcon from "@mui/icons-material/Event";
 import PersonIcon from "@mui/icons-material/Person";
 import PhoneIcon from "@mui/icons-material/Phone";
 import ReceiptIcon from "@mui/icons-material/Receipt";
+import AttachFileIcon from "@mui/icons-material/AttachFile";
+import DownloadIcon from "@mui/icons-material/Download";
+import VisibilityIcon from "@mui/icons-material/Visibility";
 import AccountBalanceWalletIcon from "@mui/icons-material/AccountBalanceWallet";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
-import WarningIcon from "@mui/icons-material/Warning";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import ShoppingCartIcon from "@mui/icons-material/ShoppingCart";
@@ -50,7 +53,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ResponsiveContainer,
   Tooltip as ChartTooltip,
   XAxis,
@@ -63,12 +65,14 @@ import { api, getErrorMessage } from "@/lib/api";
 
 import { getPermissionsSnapshot } from "@/lib/auth";
 
-import { DOC_TYPE_LABELS_TH } from "@/lib/types";
+import FilePreviewDialog from "@/components/FilePreviewDialog";
+
+import type { Palette } from "@mui/material/styles";
 
 import type {
   Customer,
-  DocumentItem,
   IssueOrder,
+  IssueOrderAttachment,
   PipelineStage,
 } from "@/lib/types";
 
@@ -123,8 +127,8 @@ function CustomerDetailDialogContent({
 }: Props) {
   const t = useTranslations("customerDetail");
   const palette = useTheme().palette;
-  const [detail, setDetail] =
-    useState<CustomerDetail | null>(null);
+  const [customerInfo, setCustomerInfo] =
+    useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState(0);
@@ -135,6 +139,14 @@ function CustomerDetailDialogContent({
     useState(false);
   const [expandedOrderId, setExpandedOrderId] =
     useState<number | null>(null);
+
+  /*
+   * ป้ายประเภทเอกสาร (id -> ชื่อ) ใช้ทั้งแท็บเอกสาร
+   * endpoint นี้ไม่ต้องมีสิทธิ์พิเศษ แค่ล็อกอิน
+   */
+  const [docTypeLabels, setDocTypeLabels] = useState<
+    Record<number, string>
+  >({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,48 +180,30 @@ function CustomerDetailDialogContent({
           setOrdersDenied(true);
         });
 
+    const docTypesTask = api
+      .get<{ id: number; documentType: string }[]>(
+        "/api/document-types",
+      )
+      .then((res) => {
+        setDocTypeLabels(
+          Object.fromEntries(
+            res.data.map((row) => [
+              row.id,
+              row.documentType,
+            ]),
+          ),
+        );
+      })
+      .catch(() => setDocTypeLabels({}));
+
     try {
-      const [customerRes, docsRes] =
-        await Promise.all([
-          api.get<Customer>(
-            `/api/customers/${customer.customerId}`,
-          ),
-          api.get<{ data: DocumentItem[]; total: number }>(
-            "/api/documents",
-            {
-              params: {
-                customerId: customer.customerId,
-                limit: 100,
-              },
-            },
-          ),
-        ]);
+      const customerRes = await api.get<Customer>(
+        `/api/customers/${customer.customerId}`,
+      );
 
-      const documents = docsRes.data.data;
+      setCustomerInfo(customerRes.data);
 
-      const sumBy = (type: string) =>
-        documents
-          .filter((doc) => doc.docType === type)
-          .reduce((sum, doc) => sum + doc.amount, 0);
-
-      const invoiced = sumBy("invoice");
-      const received = sumBy("receipt");
-
-      setDetail({
-        customer: customerRes.data,
-        documents,
-        totals: {
-          quotation: sumBy("quotation"),
-          invoiced,
-          received,
-          outstanding: Math.max(
-            invoiced - received,
-            0,
-          ),
-        },
-      });
-
-      await ordersTask;
+      await Promise.all([ordersTask, docTypesTask]);
     } catch (err) {
       setError(
         getErrorMessage(
@@ -226,7 +220,34 @@ function CustomerDetailDialogContent({
     void Promise.resolve().then(() => load());
   }, [load]);
 
-  const info = detail?.customer ?? customer;
+  const info = customerInfo ?? customer;
+
+  /*
+   * ไฟล์แนบจากทุกใบสั่งซื้อของลูกค้ารายนี้ (เรียงล่าสุดก่อน)
+   * ใช้ทั้งแท็บเอกสารและ KPI "ไฟล์แนบทั้งหมด" บนแดชบอร์ด
+   */
+  const attachments = useMemo(
+    () =>
+      orders
+        .flatMap((order) =>
+          (order.attachments ?? []).map((att) => ({
+            ...att,
+            /*
+             * /api/issue-orders ส่ง attachment เป็น raw entity (id)
+             * ส่วน endpoint /attachments ส่งเป็น view (attachmentId)
+             * normalize ให้ใช้ร่วมกันได้ทั้งสองแบบ
+             */
+            attachmentId: att.attachmentId ?? att.id ?? 0,
+            orderId: order.id,
+          })),
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() -
+            new Date(a.createdAt).getTime(),
+        ),
+    [orders],
+  );
 
   const currentStage = stages.find(
     (stage) => stage.stageKey === info.status,
@@ -498,6 +519,7 @@ function CustomerDetailDialogContent({
           >
             <Tab label={t("dashboardTab")} />
             <Tab label={t("contactTab")} />
+            <Tab label={t("ordersTab")} />
             <Tab label={t("documentsTab")} />
           </Tabs>
         </Box>
@@ -515,16 +537,9 @@ function CustomerDetailDialogContent({
         >
           {tab === 0 && (
             <DashboardTab
-              customer={info}
-              detail={detail}
               orders={orders}
               ordersDenied={ordersDenied}
-              expandedOrderId={expandedOrderId}
-              onToggleExpand={(orderId) =>
-                setExpandedOrderId((prev) =>
-                  prev === orderId ? null : orderId,
-                )
-              }
+              attachments={attachments}
               loading={loading}
             />
           )}
@@ -695,8 +710,36 @@ function CustomerDetailDialogContent({
                   ))}
                 </Stack>
               ) : (
-                <DocumentsTable
-                  documents={detail?.documents ?? []}
+                <OrdersTable
+                  orders={orders}
+                  ordersDenied={ordersDenied}
+                  expandedOrderId={expandedOrderId}
+                  onToggleExpand={(orderId) =>
+                    setExpandedOrderId((prev) =>
+                      prev === orderId ? null : orderId,
+                    )
+                  }
+                />
+              )}
+            </Box>
+          )}
+
+          {tab === 3 && (
+            <Box>
+              {loading ? (
+                <Stack spacing={1}>
+                  {[0, 1, 2].map((row) => (
+                    <Skeleton
+                      key={row}
+                      height={44}
+                    />
+                  ))}
+                </Stack>
+              ) : (
+                <AttachmentsTable
+                  attachments={attachments}
+                  denied={ordersDenied}
+                  docTypeLabels={docTypeLabels}
                 />
               )}
             </Box>
@@ -708,156 +751,377 @@ function CustomerDetailDialogContent({
 }
 
 /* =====================================================
-   ตารางเอกสาร
-   ใช้ซ้ำทั้งในแท็บ "เอกสาร" และแท็บ "แดชบอร์ด"
+   ตารางไฟล์แนบของลูกค้า (รวมจากใบสั่งซื้อทุกใบ)
+   คลิกชื่อไฟล์เพื่อเปิดดูใน FilePreviewDialog
 ===================================================== */
-function DocumentsTable({
-  documents,
-}: {
-  documents: DocumentItem[];
-}) {
-  const t = useTranslations("customerDetail");
-  const palette = useTheme().palette;
+interface AttachmentRow extends IssueOrderAttachment {
+  orderId: number;
+}
 
-  if (documents.length === 0) {
-    return (
-      <Box
-        sx={{
-          py: 6,
-          textAlign: "center",
-          border: `1px dashed ${palette.text.disabled}`,
-          borderRadius: "12px",
-        }}
-      >
-        <ReceiptIcon
-          sx={{
-            fontSize: 36,
-            color: palette.text.disabled,
-            mb: 1,
-          }}
-        />
-        <Typography
-          variant="body2"
-          sx={{ color: palette.text.disabled }}
-        >
-          {t("noDocuments")}
-        </Typography>
-      </Box>
-    );
+/* ขนาดไฟล์แบบ human-readable เช่น 1.2 MB */
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(
+      bytes /
+      (1024 * 1024)
+    ).toLocaleString("th-TH", {
+      maximumFractionDigits: 1,
+    })} MB`;
+  }
+
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toLocaleString("th-TH", {
+      maximumFractionDigits: 1,
+    })} KB`;
+  }
+
+  return `${bytes} B`;
+}
+
+/*
+ * ดาวน์โหลดไฟล์แนบ (backend ไม่ได้เปิด uploads เป็น static
+ * จึงต้องดึงผ่าน axios แบบ blob เพื่อแนบ JWT)
+ */
+async function downloadAttachmentFile(
+  orderId: number,
+  attachment: IssueOrderAttachment,
+) {
+  const response = await api.get<Blob>(
+    `/api/issue-orders/${orderId}/attachments/${attachment.attachmentId}/file`,
+    { responseType: "blob" },
+  );
+
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = attachment.originalName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* =====================================================
+   Tooltip ของกราฟ Top Sell
+   แสดงจำนวนครั้งที่สั่ง + หน่วยรวม + ยอดเงินรวม
+===================================================== */
+interface TopSellTooltipProps {
+  active?: boolean;
+  payload?: Array<{
+    payload?: {
+      name: string;
+      orderCount: number;
+      units: number;
+      amount: number;
+    };
+  }>;
+  palette: Palette;
+}
+
+function TopSellTooltip({
+  active,
+  payload,
+  palette,
+}: TopSellTooltipProps) {
+  const t = useTranslations("customerDetail");
+
+  const row = payload?.[0]?.payload;
+
+  if (!active || !row) {
+    return null;
   }
 
   return (
     <Box
       sx={{
+        px: 1.5,
+        py: 1,
+        borderRadius: "8px",
+        bgcolor: palette.background.paper,
         border: `1px solid ${palette.divider}`,
-        borderRadius: "12px",
-        overflow: "hidden",
+        boxShadow:
+          "0 4px 12px rgba(15,23,42,0.12)",
+        maxWidth: 240,
       }}
     >
-      <Table size="small">
-        <TableHead>
-          <TableRow
-            sx={{
-              bgcolor: palette.background.paper,
-              "& th": {
-                borderBottom: `1px solid ${palette.divider}`,
-              },
-            }}
-          >
-            {[
-              t("docNo"),
-              t("type"),
-              t("date"),
-              t("amount"),
-            ].map((head) => (
-              <TableCell
-                key={head}
-                sx={{
-                  fontWeight: 500,
-                  color: palette.text.secondary,
-                  py: 1.5,
-                  fontSize: 13,
-                }}
-              >
-                {head}
-              </TableCell>
-            ))}
-          </TableRow>
-        </TableHead>
+      <Typography
+        variant="caption"
+        sx={{
+          fontWeight: 700,
+          display: "block",
+        }}
+      >
+        {row.name}
+      </Typography>
 
-        <TableBody>
-          {documents.map((doc) => (
+      <Typography
+        variant="caption"
+        sx={{
+          display: "block",
+          color: palette.text.secondary,
+        }}
+      >
+        {row.orderCount} {t("unit")}
+      </Typography>
+
+      <Typography
+        variant="caption"
+        sx={{
+          display: "block",
+          color: palette.text.secondary,
+        }}
+      >
+        {row.units.toLocaleString("th-TH")}{" "}
+        {t("units")}
+      </Typography>
+
+      <Typography
+        variant="caption"
+        sx={{
+          display: "block",
+          color: palette.text.primary,
+          fontWeight: 600,
+        }}
+      >
+        {formatBaht(row.amount)}
+      </Typography>
+    </Box>
+  );
+}
+
+function AttachmentsTable({
+  attachments,
+  denied,
+  docTypeLabels,
+}: {
+  attachments: AttachmentRow[];
+  denied: boolean;
+  docTypeLabels: Record<number, string>;
+}) {
+  const t = useTranslations("customerDetail");
+  const palette = useTheme().palette;
+
+  const [preview, setPreview] =
+    useState<AttachmentRow | null>(null);
+  const [downloadError, setDownloadError] =
+    useState("");
+
+  const handleDownload = async (row: AttachmentRow) => {
+    try {
+      setDownloadError("");
+      await downloadAttachmentFile(row.orderId, row);
+    } catch {
+      setDownloadError(t("downloadError"));
+    }
+  };
+
+  if (denied) {
+    return (
+      <EmptyStateBox
+        message={t("noOrderPermission")}
+      />
+    );
+  }
+
+  if (attachments.length === 0) {
+    return (
+      <EmptyStateBox message={t("noDocuments")} />
+    );
+  }
+
+  return (
+    <Box>
+      {downloadError && (
+        <Alert
+          severity="error"
+          sx={{ mb: 1.5 }}
+          onClose={() => setDownloadError("")}
+        >
+          {downloadError}
+        </Alert>
+      )}
+
+      <Box
+        sx={{
+          border: `1px solid ${palette.divider}`,
+          borderRadius: "12px",
+          overflow: "hidden",
+        }}
+      >
+        <Table size="small">
+          <TableHead>
             <TableRow
-              key={doc.docId}
-              hover
               sx={{
-                "&:hover": {
-                  bgcolor: palette.background.paper,
-                },
-                "&:last-child td": {
-                  borderBottom: 0,
+                bgcolor: palette.background.paper,
+                "& th": {
+                  borderBottom: `1px solid ${palette.divider}`,
                 },
               }}
             >
-              <TableCell>
-                <Typography
-                  variant="body2"
+              {[
+                t("fileName"),
+                t("type"),
+                t("orderNo"),
+                t("attachedDate"),
+                t("fileSize"),
+              ].map((head) => (
+                <TableCell
+                  key={head}
                   sx={{
                     fontWeight: 500,
-                    color: palette.text.primary,
+                    color: palette.text.secondary,
+                    py: 1.5,
+                    fontSize: 13,
                   }}
                 >
-                  {doc.docNo}
-                </Typography>
+                  {head}
+                </TableCell>
+              ))}
 
-                {doc.refDocNo && (
-                  <Typography
-                    variant="caption"
+              <TableCell
+                sx={{ width: 96, py: 1.5 }}
+              />
+            </TableRow>
+          </TableHead>
+
+          <TableBody>
+            {attachments.map((row) => (
+              <TableRow
+                key={`${row.orderId}-${row.attachmentId}`}
+                hover
+                sx={{
+                  "&:hover": {
+                    bgcolor: palette.background.paper,
+                  },
+                  "&:last-child td": {
+                    borderBottom: 0,
+                  },
+                }}
+              >
+                <TableCell>
+                  <Box
                     sx={{
-                      display: "block",
-                      color: palette.text.disabled,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1,
+                      minWidth: 0,
                     }}
                   >
-                    {t("reference")} {doc.refDocNo}
+                    <AttachFileIcon
+                      sx={{
+                        fontSize: 16,
+                        color: palette.text.disabled,
+                        flexShrink: 0,
+                      }}
+                    />
+
+                    <Typography
+                      variant="body2"
+                      onClick={() => setPreview(row)}
+                      sx={{
+                        fontWeight: 500,
+                        color: palette.text.primary,
+                        cursor: "pointer",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        "&:hover": {
+                          color: palette.primary.main,
+                          textDecoration: "underline",
+                        },
+                      }}
+                    >
+                      {row.originalName}
+                    </Typography>
+                  </Box>
+                </TableCell>
+
+                <TableCell>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: palette.text.secondary,
+                    }}
+                  >
+                    {row.documentTypeId
+                      ? docTypeLabels[
+                          row.documentTypeId
+                        ] ?? "—"
+                      : "—"}
                   </Typography>
-                )}
-              </TableCell>
+                </TableCell>
 
-              <TableCell>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: palette.text.secondary,
-                  }}
-                >
-                  {DOC_TYPE_LABELS_TH[doc.docType]}
-                </Typography>
-              </TableCell>
+                <TableCell>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: palette.text.secondary,
+                    }}
+                  >
+                    #{row.orderId}
+                  </Typography>
+                </TableCell>
 
-              <TableCell>
-                <Typography
-                  variant="body2"
-                  sx={{ color: palette.text.secondary }}
-                >
-                  {formatDate(doc.issueDate)}
-                </Typography>
-              </TableCell>
+                <TableCell>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: palette.text.secondary,
+                    }}
+                  >
+                    {formatDate(row.createdAt)}
+                  </Typography>
+                </TableCell>
 
-              <TableCell align="right">
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontWeight: 500,
-                    color: palette.text.primary,
-                  }}
-                >
-                  {formatBaht(doc.amount)}
-                </Typography>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+                <TableCell>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: palette.text.secondary,
+                    }}
+                  >
+                    {formatFileSize(row.sizeBytes)}
+                  </Typography>
+                </TableCell>
+
+                <TableCell align="right">
+                  <IconButton
+                    size="small"
+                    aria-label={t("openFile")}
+                    onClick={() => setPreview(row)}
+                  >
+                    <VisibilityIcon fontSize="small" />
+                  </IconButton>
+
+                  <IconButton
+                    size="small"
+                    aria-label={t("download")}
+                    onClick={() =>
+                      void handleDownload(row)
+                    }
+                  >
+                    <DownloadIcon fontSize="small" />
+                  </IconButton>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Box>
+
+      {preview && (
+        <FilePreviewDialog
+          open
+          title={preview.originalName}
+          mimeType={preview.mimeType}
+          fileUrl={`/api/issue-orders/${preview.orderId}/attachments/${preview.attachmentId}/file`}
+          onDownload={() =>
+            void handleDownload(preview)
+          }
+          onClose={() => setPreview(null)}
+        />
+      )}
     </Box>
   );
 }
@@ -906,7 +1170,8 @@ function formatCompactBaht(value: number) {
 
 /*
  * ยอดใบสั่งซื้อรายเดือน ย้อนหลัง 6 เดือน
- * คืนค่า label + total พร้อมใช้กับกราฟโดยตรง
+ * คืนค่า year + month + label + total
+ * (year/month ใช้ตอน drill-down คลิกแท่งกราฟ)
  */
 function buildMonthlyTotals(orders: IssueOrder[]) {
   const months: {
@@ -943,79 +1208,781 @@ function buildMonthlyTotals(orders: IssueOrder[]) {
     }
   }
 
-  return months.map(({ label, total }) => ({
-    label,
-    total,
-  }));
+  return months.map(({ key, label, total }) => {
+    const [year, month] = key
+      .split("-")
+      .map(Number);
+
+    return { year, month, label, total };
+  });
 }
 
 /* =====================================================
-   แท็บแดชบอร์ด
-   สรุปทุกอย่างของลูกค้ารายนั้นไว้ในที่เดียว
-   สถานะ + KPI + กราฟ + ใบสั่งซื้อ + เอกสาร
+   ตารางใบสั่งซื้อ + รายการสินค้า (คลิกแถวเพื่อขยาย)
+   ใช้ในแท็บ "ใบสั่งซื้อ"
 ===================================================== */
-interface DashboardTabProps {
-  customer: Customer;
-  detail: CustomerDetail | null;
-  orders: IssueOrder[];
-  ordersDenied: boolean;
-  expandedOrderId: number | null;
-  onToggleExpand: (orderId: number) => void;
-  loading: boolean;
-}
-
-function DashboardTab({
-  customer,
-  detail,
+function OrdersTable({
   orders,
   ordersDenied,
   expandedOrderId,
   onToggleExpand,
+}: {
+  orders: IssueOrder[];
+  ordersDenied: boolean;
+  expandedOrderId: number | null;
+  onToggleExpand: (orderId: number) => void;
+}) {
+  const t = useTranslations("customerDetail");
+  const palette = useTheme().palette;
+
+  if (ordersDenied) {
+    return (
+      <EmptyStateBox
+        message={t("noOrderPermission")}
+      />
+    );
+  }
+
+  if (orders.length === 0) {
+    return <EmptyStateBox message={t("noOrders")} />;
+  }
+
+  return (
+    <Box
+      sx={{
+        border: `1px solid ${palette.divider}`,
+        borderRadius: "12px",
+        overflow: "hidden",
+      }}
+    >
+      <Table size="small">
+        <TableHead>
+          <TableRow
+            sx={{
+              bgcolor: palette.background.paper,
+              "& th": {
+                borderBottom: `1px solid ${palette.divider}`,
+              },
+            }}
+          >
+            {[
+              t("orderNo"),
+              t("date"),
+              t("stageHeader"),
+              t("amount"),
+            ].map((head) => (
+              <TableCell
+                key={head}
+                sx={{
+                  fontWeight: 500,
+                  color: palette.text.secondary,
+                  py: 1.5,
+                  fontSize: 13,
+                }}
+              >
+                {head}
+              </TableCell>
+            ))}
+
+            <TableCell
+              sx={{ width: 56, py: 1.5 }}
+            />
+          </TableRow>
+        </TableHead>
+
+        <TableBody>
+          {orders.map((order) => {
+            const expanded =
+              expandedOrderId === order.id;
+
+            return (
+              <Fragment key={order.id}>
+                <TableRow
+                  hover
+                  onClick={() =>
+                    onToggleExpand(order.id)
+                  }
+                  sx={{
+                    cursor: "pointer",
+                    "&:hover": {
+                      bgcolor:
+                        palette.background.paper,
+                    },
+                  }}
+                >
+                  <TableCell>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 500,
+                        color: palette.text.primary,
+                      }}
+                    >
+                      #{order.id}
+                    </Typography>
+                  </TableCell>
+
+                  <TableCell>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color:
+                          palette.text.secondary,
+                      }}
+                    >
+                      {formatDate(order.createdAt)}
+                    </Typography>
+                  </TableCell>
+
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      sx={{
+                        fontWeight: 600,
+                        borderRadius: "8px",
+                        color:
+                          palette.background
+                            .default,
+                        bgcolor:
+                          order.orderPipeline
+                            ?.color ??
+                          palette.text.disabled,
+                      }}
+                      label={
+                        order.orderPipeline
+                          ?.label ?? "—"
+                      }
+                    />
+                  </TableCell>
+
+                  <TableCell align="right">
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 500,
+                        color: palette.text.primary,
+                      }}
+                    >
+                      {formatBaht(order.amount)}
+                    </Typography>
+                  </TableCell>
+
+                  <TableCell align="right">
+                    <IconButton
+                      size="small"
+                      aria-label={
+                        expanded
+                          ? t("collapseProducts")
+                          : t("expandProducts")
+                      }
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onToggleExpand(order.id);
+                      }}
+                    >
+                      {expanded ? (
+                        <KeyboardArrowUpIcon fontSize="small" />
+                      ) : (
+                        <KeyboardArrowDownIcon fontSize="small" />
+                      )}
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+
+                {expanded && (
+                  <TableRow
+                    sx={{
+                      bgcolor:
+                        palette.background.paper,
+                      "& td": { py: 1.5 },
+                    }}
+                  >
+                    <TableCell colSpan={5}>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          display: "block",
+                          fontWeight: 700,
+                          color:
+                            palette.text.disabled,
+                          mb: 0.75,
+                          textTransform:
+                            "uppercase",
+                          letterSpacing: 1,
+                        }}
+                      >
+                        {t("productsPurchased")}
+                      </Typography>
+
+                      {order.details &&
+                      order.details.length > 0 ? (
+                        <Stack spacing={0.5}>
+                          {order.details.map(
+                            (line) => (
+                              <Box
+                                key={
+                                  line.id ??
+                                  `${order.id}-${line.productId}`
+                                }
+                                sx={{
+                                  display: "flex",
+                                  justifyContent:
+                                    "space-between",
+                                  gap: 2,
+                                  flexWrap:
+                                    "wrap",
+                                }}
+                              >
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    color:
+                                      palette
+                                        .text
+                                        .primary,
+                                  }}
+                                >
+                                  •{" "}
+                                  {line.product
+                                    ?.name ??
+                                    `#${line.productId}`}
+                                </Typography>
+
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    color:
+                                      palette
+                                        .text
+                                        .secondary,
+                                  }}
+                                >
+                                  {line.quantity.toLocaleString(
+                                    "th-TH",
+                                    {
+                                      maximumFractionDigits: 3,
+                                    },
+                                  )}{" "}
+                                  ×{" "}
+                                  {formatBaht(
+                                    line.unitPrice,
+                                  )}{" "}
+                                  ={" "}
+                                  <Box
+                                    component="span"
+                                    sx={{
+                                      fontWeight: 600,
+                                      color:
+                                        palette
+                                          .text
+                                          .primary,
+                                    }}
+                                  >
+                                    {formatBaht(
+                                      line.quantity *
+                                        line.unitPrice,
+                                    )}
+                                  </Box>
+                                </Typography>
+                              </Box>
+                            ),
+                          )}
+                        </Stack>
+                      ) : (
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color:
+                              palette.text
+                                .disabled,
+                          }}
+                        >
+                          {t("noOrderLines")}
+                        </Typography>
+                      )}
+
+                      {order.note && (
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            display: "block",
+                            mt: 1,
+                            color:
+                              palette.text
+                                .disabled,
+                          }}
+                        >
+                          {t("orderNote")}:
+                          {order.note}
+                        </Typography>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </Box>
+  );
+}
+
+/* =====================================================
+   Drill-down ของกราฟบนแท็บแดชบอร์ด
+   คลิกแท่ง Top Sell -> ดูสินค้านั้นของลูกค้ารายนี้
+   คลิกแท่งเดือน -> ดูใบสั่งซื้อของเดือนนั้น
+===================================================== */
+type Drilldown =
+  | {
+      kind: "product";
+      productId: number;
+      name: string;
+    }
+  | {
+      kind: "month";
+      year: number;
+      month: number;
+      label: string;
+    };
+
+interface ChartDrilldownDialogProps {
+  drilldown: Drilldown;
+  orders: IssueOrder[];
+  onClose: () => void;
+}
+
+function ChartDrilldownDialog({
+  drilldown,
+  orders,
+  onClose,
+}: ChartDrilldownDialogProps) {
+  const t = useTranslations("customerDetail");
+  const palette = useTheme().palette;
+
+  /*
+   * โหมดสินค้า: ทุกบรรทัดของสินค้านั้นในทุกใบสั่งซื้อ
+   * โหมดเดือน: ใบสั่งซื้อที่สร้างในเดือนนั้น
+   */
+  const rows =
+    drilldown.kind === "product"
+      ? orders.flatMap((order) =>
+          (order.details ?? [])
+            .filter(
+              (line) =>
+                line.productId === drilldown.productId,
+            )
+            .map((line) => ({ order, line })),
+        )
+      : orders
+          .filter((order) => {
+            const created = new Date(order.createdAt);
+            return (
+              created.getFullYear() ===
+                drilldown.year &&
+              created.getMonth() === drilldown.month
+            );
+          })
+          .map((order) => ({ order, line: null }));
+
+  rows.sort(
+    (a, b) =>
+      new Date(b.order.createdAt).getTime() -
+      new Date(a.order.createdAt).getTime(),
+  );
+
+  const title =
+    drilldown.kind === "product"
+      ? drilldown.name
+      : new Date(
+          drilldown.year,
+          drilldown.month,
+        ).toLocaleDateString("th-TH", {
+          month: "long",
+          year: "numeric",
+        });
+
+  const summary =
+    drilldown.kind === "product"
+      ? [
+          `${rows.length} ${t("unit")}`,
+          `${rows
+            .reduce(
+              (sum, row) =>
+                sum + (row.line?.quantity ?? 0),
+              0,
+            )
+            .toLocaleString("th-TH")} ${t("units")}`,
+          formatBaht(
+            rows.reduce(
+              (sum, row) =>
+                sum +
+                (row.line
+                  ? row.line.quantity *
+                    row.line.unitPrice
+                  : 0),
+              0,
+            ),
+          ),
+        ].join(" · ")
+      : [
+          `${rows.length} ${t("orderUnit")}`,
+          formatBaht(
+            rows.reduce(
+              (sum, row) => sum + row.order.amount,
+              0,
+            ),
+          ),
+        ].join(" · ");
+
+  const headers =
+    drilldown.kind === "product"
+      ? [
+          t("orderNo"),
+          t("date"),
+          t("stageHeader"),
+          t("quantity"),
+          t("lineTotal"),
+        ]
+      : [
+          t("orderNo"),
+          t("date"),
+          t("stageHeader"),
+          t("amount"),
+          t("attachedFiles"),
+        ];
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      slotProps={{
+        paper: {
+          sx: {
+            width: "640px",
+            maxWidth: "94vw",
+            maxHeight: "80vh",
+            borderRadius: "16px",
+          },
+        },
+      }}
+    >
+      <DialogTitle sx={{ pb: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 2,
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              variant="h6"
+              sx={{
+                fontWeight: 700,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {title}
+            </Typography>
+
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                mt: 0.5,
+                color: palette.text.disabled,
+              }}
+            >
+              {summary}
+            </Typography>
+          </Box>
+
+          <IconButton
+            onClick={onClose}
+            aria-label={t("closeAria")}
+            size="small"
+            sx={{
+              color: palette.text.secondary,
+              border: `1px solid ${palette.divider}`,
+              borderRadius: "10px",
+              flexShrink: 0,
+              "&:hover": {
+                bgcolor: palette.background.paper,
+              },
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      </DialogTitle>
+
+      <DialogContent sx={{ pt: "8px !important" }}>
+        {rows.length === 0 ? (
+          <EmptyStateBox message={t("noOrders")} />
+        ) : (
+          <Box
+            sx={{
+              border: `1px solid ${palette.divider}`,
+              borderRadius: "12px",
+              overflow: "hidden",
+            }}
+          >
+            <Table size="small">
+              <TableHead>
+                <TableRow
+                  sx={{
+                    bgcolor: palette.background.paper,
+                    "& th": {
+                      borderBottom: `1px solid ${palette.divider}`,
+                    },
+                  }}
+                >
+                  {headers.map((head) => (
+                    <TableCell
+                      key={head}
+                      sx={{
+                        fontWeight: 500,
+                        color: palette.text.secondary,
+                        py: 1.5,
+                        fontSize: 13,
+                      }}
+                    >
+                      {head}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              </TableHead>
+
+              <TableBody>
+                {rows.map(({ order, line }) => (
+                  <TableRow
+                    key={
+                      line
+                        ? `${order.id}-${line.id ?? line.productId}`
+                        : `${order.id}`
+                    }
+                    hover
+                    sx={{
+                      "&:hover": {
+                        bgcolor:
+                          palette.background.paper,
+                      },
+                      "&:last-child td": {
+                        borderBottom: 0,
+                      },
+                    }}
+                  >
+                    <TableCell>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontWeight: 500,
+                          color: palette.text.primary,
+                        }}
+                      >
+                        #{order.id}
+                      </Typography>
+                    </TableCell>
+
+                    <TableCell>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: palette.text.secondary,
+                        }}
+                      >
+                        {formatDate(order.createdAt)}
+                      </Typography>
+                    </TableCell>
+
+                    <TableCell>
+                      <Chip
+                        size="small"
+                        sx={{
+                          fontWeight: 600,
+                          borderRadius: "8px",
+                          color:
+                            palette.background.default,
+                          bgcolor:
+                            order.orderPipeline
+                              ?.color ??
+                            palette.text.disabled,
+                        }}
+                        label={
+                          order.orderPipeline
+                            ?.label ?? "—"
+                        }
+                      />
+                    </TableCell>
+
+                    {drilldown.kind === "product" ? (
+                      <>
+                        <TableCell>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              color:
+                                palette.text.secondary,
+                            }}
+                          >
+                            {(line?.quantity ?? 0).toLocaleString(
+                              "th-TH",
+                              {
+                                maximumFractionDigits: 3,
+                              },
+                            )}{" "}
+                            ×{" "}
+                            {formatBaht(
+                              line?.unitPrice ?? 0,
+                            )}
+                          </Typography>
+                        </TableCell>
+
+                        <TableCell align="right">
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: 500,
+                              color:
+                                palette.text.primary,
+                            }}
+                          >
+                            {formatBaht(
+                              (line?.quantity ?? 0) *
+                                (line?.unitPrice ?? 0),
+                            )}
+                          </Typography>
+                        </TableCell>
+                      </>
+                    ) : (
+                      <>
+                        <TableCell align="right">
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: 500,
+                              color:
+                                palette.text.primary,
+                            }}
+                          >
+                            {formatBaht(order.amount)}
+                          </Typography>
+                        </TableCell>
+
+                        <TableCell align="right">
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              color:
+                                palette.text.secondary,
+                            }}
+                          >
+                            {order.attachments?.length ??
+                              0}
+                          </Typography>
+                        </TableCell>
+                      </>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Box>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* =====================================================
+   แท็บแดชบอร์ด
+   สรุปข้อมูลของลูกค้ารายนั้นไว้ในที่เดียว
+   KPI + กราฟ
+===================================================== */
+interface DashboardTabProps {
+  orders: IssueOrder[];
+  ordersDenied: boolean;
+  attachments: AttachmentRow[];
+  loading: boolean;
+}
+
+function DashboardTab({
+  orders,
+  ordersDenied,
+  attachments,
   loading,
 }: DashboardTabProps) {
   const t = useTranslations("customerDetail");
   const palette = useTheme().palette;
 
-  const totals = detail?.totals;
-  const documents = detail?.documents ?? [];
+  /*
+   * แท่งกราฟที่ผู้ใช้คลิก (Top Sell หรือเดือน)
+   * ค่าไม่ null = เปิด drill-down dialog
+   */
+  const [drilldown, setDrilldown] =
+    useState<Drilldown | null>(null);
 
   const orderTotal = orders.reduce(
     (sum, order) => sum + order.amount,
     0,
   );
 
-  const purchaseOrderTotal = documents
-    .filter((doc) => doc.docType === "purchase_order")
-    .reduce((sum, doc) => sum + doc.amount, 0);
-
-  const docsByType = [
-    {
-      label: "QT",
-      total: totals?.quotation ?? 0,
-      color: "#2563eb",
-    },
-    {
-      label: "IV",
-      total: totals?.invoiced ?? 0,
-      color: "#f97316",
-    },
-    {
-      label: "RC",
-      total: totals?.received ?? 0,
-      color: "#16a34a",
-    },
-    {
-      label: "PO",
-      total: purchaseOrderTotal,
-      color: "#7c3aed",
-    },
-  ];
-
-  const docsHasData = docsByType.some(
-    (item) => item.total > 0,
-  );
-
   const monthlyData = buildMonthlyTotals(orders);
+
+  /*
+   * Top Sell: สินค้าที่ลูกค้าสั่งซื้อบ่อยที่สุด (Top 5)
+   * เกณฑ์หลักคือจำนวนใบสั่งซื้อที่มีสินค้านั้น
+   * tie-break ด้วยจำนวนหน่วยรวม
+   */
+  const topProducts = (() => {
+    const map = new Map<
+      number,
+      {
+        name: string;
+        orderIds: Set<number>;
+        units: number;
+        amount: number;
+      }
+    >();
+
+    for (const order of orders) {
+      for (const line of order.details ?? []) {
+        const entry = map.get(line.productId) ?? {
+          name:
+            line.product?.name ?? `#${line.productId}`,
+          orderIds: new Set<number>(),
+          units: 0,
+          amount: 0,
+        };
+
+        entry.orderIds.add(order.id);
+        entry.units += line.quantity;
+        entry.amount +=
+          line.quantity * line.unitPrice;
+
+        map.set(line.productId, entry);
+      }
+    }
+
+    return [...map.entries()]
+      .map(([productId, entry]) => ({
+        productId,
+        name: entry.name,
+        orderCount: entry.orderIds.size,
+        units: entry.units,
+        amount: entry.amount,
+      }))
+      .sort(
+        (a, b) =>
+          b.orderCount - a.orderCount ||
+          b.units - a.units,
+      )
+      .slice(0, 5);
+  })();
 
   const kpis = [
     {
@@ -1035,24 +2002,27 @@ function DashboardTab({
       color: "#7c3aed",
     },
     {
-      label: t("purchaseCount"),
-      value: `${customer.purchaseCount ?? 0} ${t("unit")}`,
-      icon: <ReceiptIcon sx={{ fontSize: 20 }} />,
+      label: t("totalFiles"),
+      value: ordersDenied
+        ? "—"
+        : `${attachments.length}`,
+      icon: <AttachFileIcon sx={{ fontSize: 20 }} />,
       color: "#0891b2",
     },
     {
-      label: t("received"),
-      value: formatBaht(totals?.received ?? 0),
+      label: t("ordersByMonth"),
+      value: ordersDenied
+        ? "—"
+        : formatBaht(
+            monthlyData.reduce(
+              (sum, month) => sum + month.total,
+              0,
+            ),
+          ),
       icon: (
         <AccountBalanceWalletIcon sx={{ fontSize: 20 }} />
       ),
       color: "#16a34a",
-    },
-    {
-      label: t("outstanding"),
-      value: formatBaht(totals?.outstanding ?? 0),
-      icon: <WarningIcon sx={{ fontSize: 20 }} />,
-      color: "#dc2626",
     },
   ];
 
@@ -1088,7 +2058,7 @@ function DashboardTab({
           gridTemplateColumns: {
             xs: "1fr 1fr",
             sm: "repeat(3, 1fr)",
-            md: "repeat(5, 1fr)",
+            md: "repeat(4, 1fr)",
           },
           gap: 1.5,
         }}
@@ -1159,7 +2129,7 @@ function DashboardTab({
         ))}
       </Box>
 
-      {/* กราฟ 2 ตัว: ยอดเอกสารตามประเภท + ยอดซื้อ 6 เดือน */}
+      {/* กราฟ 2 ตัว: Top Sell + ยอดซื้อ 6 เดือน */}
       <Box
         sx={{
           display: "grid",
@@ -1177,36 +2147,41 @@ function DashboardTab({
             border: `1px solid ${palette.divider}`,
             bgcolor: palette.background.default,
             minWidth: 0,
+            "& .recharts-rectangle": {
+              cursor: "pointer",
+            },
           }}
         >
           <Typography
             variant="subtitle2"
             sx={{ fontWeight: 600, mb: 1.5 }}
           >
-            {t("docsByType")}
+            {t("topSell")}
           </Typography>
 
-          {docsHasData ? (
+          {!ordersDenied && topProducts.length > 0 ? (
             <ResponsiveContainer
               width="100%"
               height={180}
             >
               <BarChart
-                data={docsByType}
+                data={topProducts}
+                layout="vertical"
                 margin={{
                   top: 0,
-                  right: 8,
-                  left: -8,
+                  right: 16,
+                  left: 0,
                   bottom: 0,
                 }}
               >
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke={palette.divider}
-                  vertical={false}
+                  horizontal={false}
                 />
                 <XAxis
-                  dataKey="label"
+                  type="number"
+                  allowDecimals={false}
                   tickLine={false}
                   axisLine={false}
                   tick={{
@@ -1215,10 +2190,16 @@ function DashboardTab({
                   }}
                 />
                 <YAxis
-                  width={48}
+                  type="category"
+                  dataKey="name"
+                  width={110}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={formatCompactBaht}
+                  tickFormatter={(value: string) =>
+                    value.length > 16
+                      ? `${value.slice(0, 15)}…`
+                      : value
+                  }
                   tick={{
                     fontSize: 11,
                     fill: palette.text.disabled,
@@ -1228,26 +2209,43 @@ function DashboardTab({
                   cursor={{
                     fill: palette.background.paper,
                   }}
-                  formatter={(value) =>
-                    formatBaht(Number(value))
+                  content={
+                    <TopSellTooltip palette={palette} />
                   }
                 />
                 <Bar
-                  dataKey="total"
-                  radius={[6, 6, 0, 0]}
-                >
-                  {docsByType.map((entry) => (
-                    <Cell
-                      key={entry.label}
-                      fill={entry.color}
-                    />
-                  ))}
-                </Bar>
+                  dataKey="orderCount"
+                  fill={palette.primary.main}
+                  radius={[0, 6, 6, 0]}
+                  barSize={16}
+                  onClick={(entry) => {
+                    const row = (
+                      entry as {
+                        payload?: {
+                          productId: number;
+                          name: string;
+                        };
+                      }
+                    ).payload;
+
+                    if (row) {
+                      setDrilldown({
+                        kind: "product",
+                        productId: row.productId,
+                        name: row.name,
+                      });
+                    }
+                  }}
+                />
               </BarChart>
             </ResponsiveContainer>
           ) : (
             <EmptyStateBox
-              message={t("chartNoData")}
+              message={
+                ordersDenied
+                  ? t("noOrderPermission")
+                  : t("chartNoData")
+              }
             />
           )}
         </Box>
@@ -1259,6 +2257,9 @@ function DashboardTab({
             border: `1px solid ${palette.divider}`,
             bgcolor: palette.background.default,
             minWidth: 0,
+            "& .recharts-rectangle": {
+              cursor: "pointer",
+            },
           }}
         >
           <Typography
@@ -1318,6 +2319,26 @@ function DashboardTab({
                   dataKey="total"
                   fill={palette.primary.main}
                   radius={[6, 6, 0, 0]}
+                  onClick={(entry) => {
+                    const row = (
+                      entry as {
+                        payload?: {
+                          year: number;
+                          month: number;
+                          label: string;
+                        };
+                      }
+                    ).payload;
+
+                    if (row) {
+                      setDrilldown({
+                        kind: "month",
+                        year: row.year,
+                        month: row.month,
+                        label: row.label,
+                      });
+                    }
+                  }}
                 />
               </BarChart>
             </ResponsiveContainer>
@@ -1333,386 +2354,15 @@ function DashboardTab({
         </Box>
       </Box>
 
-      {/* ใบสั่งซื้อ + รายการสินค้า (คลิกแถวเพื่อขยาย) */}
-      <Box>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            mb: 1,
-          }}
-        >
-          <ShoppingCartIcon
-            sx={{
-              fontSize: 18,
-              color: palette.text.secondary,
-            }}
-          />
-
-          <Typography
-            variant="subtitle2"
-            sx={{ fontWeight: 700 }}
-          >
-            {t("ordersSection")}
-          </Typography>
-
-          <Typography
-            variant="caption"
-            sx={{
-              fontWeight: 600,
-              color: palette.text.disabled,
-              bgcolor: palette.background.paper,
-              px: 1,
-              py: 0.25,
-              borderRadius: "6px",
-            }}
-          >
-            {ordersDenied ? "—" : orders.length}
-          </Typography>
-        </Box>
-
-        {ordersDenied ? (
-          <EmptyStateBox
-            message={t("noOrderPermission")}
-          />
-        ) : orders.length === 0 ? (
-          <EmptyStateBox message={t("noOrders")} />
-        ) : (
-          <Box
-            sx={{
-              border: `1px solid ${palette.divider}`,
-              borderRadius: "12px",
-              overflow: "hidden",
-            }}
-          >
-            <Table size="small">
-              <TableHead>
-                <TableRow
-                  sx={{
-                    bgcolor: palette.background.paper,
-                    "& th": {
-                      borderBottom: `1px solid ${palette.divider}`,
-                    },
-                  }}
-                >
-                  {[
-                    t("orderNo"),
-                    t("date"),
-                    t("stageHeader"),
-                    t("amount"),
-                  ].map((head) => (
-                    <TableCell
-                      key={head}
-                      sx={{
-                        fontWeight: 500,
-                        color: palette.text.secondary,
-                        py: 1.5,
-                        fontSize: 13,
-                      }}
-                    >
-                      {head}
-                    </TableCell>
-                  ))}
-
-                  <TableCell
-                    sx={{ width: 56, py: 1.5 }}
-                  />
-                </TableRow>
-              </TableHead>
-
-              <TableBody>
-                {orders.map((order) => {
-                  const expanded =
-                    expandedOrderId === order.id;
-
-                  return (
-                    <Fragment key={order.id}>
-                      <TableRow
-                        hover
-                        onClick={() =>
-                          onToggleExpand(order.id)
-                        }
-                        sx={{
-                          cursor: "pointer",
-                          "&:hover": {
-                            bgcolor:
-                              palette.background.paper,
-                          },
-                        }}
-                      >
-                        <TableCell>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 500,
-                              color: palette.text.primary,
-                            }}
-                          >
-                            #{order.id}
-                          </Typography>
-                        </TableCell>
-
-                        <TableCell>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              color:
-                                palette.text.secondary,
-                            }}
-                          >
-                            {formatDate(order.createdAt)}
-                          </Typography>
-                        </TableCell>
-
-                        <TableCell>
-                          <Chip
-                            size="small"
-                            sx={{
-                              fontWeight: 600,
-                              borderRadius: "8px",
-                              color:
-                                palette.background
-                                  .default,
-                              bgcolor:
-                                order.orderPipeline
-                                  ?.color ??
-                                palette.text.disabled,
-                            }}
-                            label={
-                              order.orderPipeline
-                                ?.label ?? "—"
-                            }
-                          />
-                        </TableCell>
-
-                        <TableCell align="right">
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 500,
-                              color: palette.text.primary,
-                            }}
-                          >
-                            {formatBaht(order.amount)}
-                          </Typography>
-                        </TableCell>
-
-                        <TableCell align="right">
-                          <IconButton
-                            size="small"
-                            aria-label={
-                              expanded
-                                ? t("collapseProducts")
-                                : t("expandProducts")
-                            }
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onToggleExpand(order.id);
-                            }}
-                          >
-                            {expanded ? (
-                              <KeyboardArrowUpIcon fontSize="small" />
-                            ) : (
-                              <KeyboardArrowDownIcon fontSize="small" />
-                            )}
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
-
-                      {expanded && (
-                        <TableRow
-                          sx={{
-                            bgcolor:
-                              palette.background.paper,
-                            "& td": { py: 1.5 },
-                          }}
-                        >
-                          <TableCell colSpan={5}>
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                display: "block",
-                                fontWeight: 700,
-                                color:
-                                  palette.text.disabled,
-                                mb: 0.75,
-                                textTransform:
-                                  "uppercase",
-                                letterSpacing: 1,
-                              }}
-                            >
-                              {t("productsPurchased")}
-                            </Typography>
-
-                            {order.details &&
-                            order.details.length > 0 ? (
-                              <Stack spacing={0.5}>
-                                {order.details.map(
-                                  (line) => (
-                                    <Box
-                                      key={
-                                        line.id ??
-                                        `${order.id}-${line.productId}`
-                                      }
-                                      sx={{
-                                        display: "flex",
-                                        justifyContent:
-                                          "space-between",
-                                        gap: 2,
-                                        flexWrap:
-                                          "wrap",
-                                      }}
-                                    >
-                                      <Typography
-                                        variant="body2"
-                                        sx={{
-                                          color:
-                                            palette
-                                              .text
-                                              .primary,
-                                        }}
-                                      >
-                                        •{" "}
-                                        {line.product
-                                          ?.name ??
-                                          `#${line.productId}`}
-                                      </Typography>
-
-                                      <Typography
-                                        variant="body2"
-                                        sx={{
-                                          color:
-                                            palette
-                                              .text
-                                              .secondary,
-                                        }}
-                                      >
-                                        {line.quantity.toLocaleString(
-                                          "th-TH",
-                                          {
-                                            maximumFractionDigits: 3,
-                                          },
-                                        )}{" "}
-                                        ×{" "}
-                                        {formatBaht(
-                                          line.unitPrice,
-                                        )}{" "}
-                                        ={" "}
-                                        <Box
-                                          component="span"
-                                          sx={{
-                                            fontWeight: 600,
-                                            color:
-                                              palette
-                                                .text
-                                                .primary,
-                                          }}
-                                        >
-                                          {formatBaht(
-                                            line.quantity *
-                                              line.unitPrice,
-                                          )}
-                                        </Box>
-                                      </Typography>
-                                    </Box>
-                                  ),
-                                )}
-                              </Stack>
-                            ) : (
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  color:
-                                    palette.text
-                                      .disabled,
-                                }}
-                              >
-                                {t("noOrderLines")}
-                              </Typography>
-                            )}
-
-                            {order.note && (
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  display: "block",
-                                  mt: 1,
-                                  color:
-                                    palette.text
-                                      .disabled,
-                                }}
-                              >
-                                {t("orderNote")}:
-                                {order.note}
-                              </Typography>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </Box>
-        )}
-      </Box>
-
-      {/* เอกสารทั้งหมด */}
-      <Box>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            mb: 1,
-          }}
-        >
-          <ReceiptIcon
-            sx={{
-              fontSize: 18,
-              color: palette.text.secondary,
-            }}
-          />
-
-          <Typography
-            variant="subtitle2"
-            sx={{ fontWeight: 700 }}
-          >
-            {t("documentsSection")}
-          </Typography>
-
-          <Typography
-            variant="caption"
-            sx={{
-              fontWeight: 600,
-              color: palette.text.disabled,
-              bgcolor: palette.background.paper,
-              px: 1,
-              py: 0.25,
-              borderRadius: "6px",
-            }}
-          >
-            {documents.length}
-          </Typography>
-        </Box>
-
-        <DocumentsTable documents={documents} />
-      </Box>
+      {drilldown && (
+        <ChartDrilldownDialog
+          drilldown={drilldown}
+          orders={orders}
+          onClose={() => setDrilldown(null)}
+        />
+      )}
     </Stack>
   );
-}
-
-interface CustomerDetail {
-  customer: Customer;
-  documents: DocumentItem[];
-  totals: {
-    quotation: number;
-    invoiced: number;
-    received: number;
-    outstanding: number;
-  };
 }
 
 interface Props {

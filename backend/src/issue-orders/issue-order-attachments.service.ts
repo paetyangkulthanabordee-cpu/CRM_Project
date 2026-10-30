@@ -186,6 +186,15 @@ export class IssueOrderAttachmentsService {
         }),
       );
 
+      /*
+       * อัปโหลดไฟล์ = activity ใหม่ของบอร์ด
+       * -> reset timer ของ Aging Rules (นับ age การ์ดใหม่จากตรงนี้)
+       */
+      await this.ordersRepository.update(
+        { id: orderId },
+        { lastActivityAt: new Date() },
+      );
+
       return this.toView(saved);
     } catch (error) {
       /*

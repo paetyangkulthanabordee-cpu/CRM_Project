@@ -176,6 +176,7 @@ describe('WorkflowRulesService', () => {
         expect(unmetRules).toHaveLength(1);
         expect(unmetRules[0]).toMatchObject({
           ruleId: 5,
+          fieldKey: null,
           met: false,
           currentCount: 1,
           requiredCount: 2,
@@ -266,6 +267,32 @@ describe('WorkflowRulesService', () => {
       expect(result.rules[0]).toMatchObject({
         met: true,
         currentCount: 1,
+      });
+    });
+
+    it('returns fieldKey for field rules so the form can place them under the right field', async () => {
+      mockRulesRepository.find.mockResolvedValue([
+        {
+          id: 8,
+          ruleName: 'ต้องมีหมายเหตุ',
+          fromStageId: 1,
+          toStageId: 2,
+          conditionType: 'field',
+          conditionConfig: { field: 'note' },
+          documentTypeId: null,
+          isActive: true,
+          isRequired: true,
+        },
+      ]);
+
+      const result = await service.checkMove(9, 2);
+
+      expect(result.rules[0]).toMatchObject({
+        conditionType: 'field',
+        fieldKey: 'note',
+        met: false,
+        currentCount: 0,
+        requiredCount: 1,
       });
     });
 

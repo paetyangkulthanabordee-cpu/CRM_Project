@@ -133,6 +133,22 @@ export class IssueOrder {
   })
   note: string | null;
 
+  /*
+   * เวลาของกิจกรรมล่าสุดบนการ์ด (ย้ายขั้นตอน / แก้ไขข้อมูล / อัปโหลดไฟล์)
+   * ใช้เป็นจุดเริ่มต้นนับเวลาให้ Aging Rules (หน้า Workflow Rules แท็บที่ 2):
+   *   ไม่มี activity ถึง warning_after_days -> การ์ดสีเหลือง
+   *   ไม่มี activity ถึง critical_after_days -> การ์ดสีแดง
+   *
+   * ทุกครั้งที่มี activity ใหม่ ระบบจะเซ็ตค่านี้เป็นเวลาปัจจุบัน (reset timer)
+   * NULL = ข้อมูลเก่าที่ยังไม่ถูก touch เลย (หน้าบอร์ด fallback ไป updated_at เอง)
+   */
+  @Column({
+    name: 'last_activity_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  lastActivityAt: Date | null;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'timestamptz',
