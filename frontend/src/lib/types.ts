@@ -209,10 +209,19 @@ export interface IssueOrder {
   note: string | null;
 
   /*
-   * เวลาของกิจกรรมล่าสุดบนการ์ด (ย้ายขั้นตอน/แก้ไข/อัปโหลดไฟล์)
-   * จุดเริ่มต้นนับเวลาของ Aging Rules — ค่า null ให้ fallback ไป updatedAt
+   * true = ถูก Aging Rule ซ่อนออกจาก Order Pipeline (Soft Archive)
+   * - หน้าบอร์ดยิง API ด้วย archived=false จึงไม่ส่งใบนี้มาแสดง
+   * - ⚠ ข้อมูลอยู่ครบทุก field (ไม่มีการลบ) เปิดดูได้จากหน้าอื่น
+   * ปลดการซ่อน: PATCH {isArchived: false}
    */
-  lastActivityAt?: string | null;
+  isArchived?: boolean;
+
+  /*
+   * เวลาของกิจกรรมล่าสุดบนใบสั่งซื้อ = updated_at
+   * (สร้าง/แก้ไข/ย้ายขั้นตอน/อัปโหลดไฟล์ ระบบอัปเดตให้เอง)
+   * จุดเริ่มต้นนับเวลาของ Aging Rules
+   * ค่า null ให้ fallback ไป createdAt
+   */
   createdAt: string;
   updatedAt: string;
 }
@@ -245,6 +254,8 @@ export interface IssueOrderAttachment {
 /*
  * ประเภทเงื่อนไขของ Workflow Rule
  * - attachment : ต้องแนบไฟล์อย่างน้อย minFiles ไฟล์
+ *               (ระบุ documentTypeId -> นับเฉพาะไฟล์ประเภทนั้น,
+ *                ไม่ระบุ -> นับรวมไฟล์ทุกประเภท)
  * - field      : ต้องกรอกฟิลด์ที่กำหนด (note / details / amount)
  * - document   : ต้องมีเอกสารประเภท docType ของลูกค้ารายนั้น
  * - payment    : ต้องมีข้อมูลการชำระเงิน (เอกสารใบเสร็จ)
@@ -264,7 +275,7 @@ export interface WorkflowRuleConditionConfig {
 /*
  * แถวหนึ่งในตาราง Workflow Rules Management
  * backend แนบ label ของ stage ต้นทาง/ปลายทางมาให้แล้ว
- * documentTypeId = FK -> document_type (ใช้กับ conditionType 'document')
+ * documentTypeId = FK -> document_type (ใช้กับ conditionType 'document'/'attachment')
  */
 export interface WorkflowRule {
   ruleId: number;
@@ -287,11 +298,28 @@ export interface WorkflowRule {
 }
 
 /*
+ * การกระทำของ Aging Rule (เลือกได้อย่างเดียวต่อ 1 ใบ)
+ *   none         = "Color mark" — แค่เปลี่ยนสีการ์ดตามวัน
+ *   auto_archive = "ซ่อนการ์ด" ออกจาก Order Pipeline เมื่อครบกำหนด
+ *                  (is_archived = true — ⚠ ไม่ลบข้อมูลออกจาก DB)
+ *                  ทำงานอัตโนมัติโดย backend (เฉพาะบอร์ดใบสั่งซื้อ)
+ *   edit_lock    = ห้ามแก้ไขข้อมูลเมื่ออยู่ในคอลัมน์นี้ (ย้ายคอลัมน์ได้)
+ */
+export type AgingAction =
+  | "none"
+  | "auto_archive"
+  | "edit_lock";
+
+/*
  * แถวหนึ่งในตาราง aging_rules (Time-based Workflow Rules)
  * กำหนดวันที่เปลี่ยนสีการ์ด Kanban เมื่อไม่มี activity:
  *   ไม่ถึง warningAfterDays  -> Normal (สีปกติ)
  *   ถึง warningAfterDays     -> Warning (สีเหลือง)
  *   ถึง criticalAfterDays    -> Critical (สีแดง)
+ *
+ * scope: rule มีผลเฉพาะบอร์ดที่เลือก (boardType) และ
+ *        ถ้าระบุ stageKey = เฉพาะคอลัมน์นั้น / null = ทุกคอลัมน์ของบอร์ด
+ * action: การกระทำเพิ่มเติมของ rule (ดู AgingAction)
  * เปิด/ปิดรายละใบได้ผ่านหน้า Administration -> Workflow Rules
  */
 export interface AgingRule {
@@ -300,6 +328,19 @@ export interface AgingRule {
   warningAfterDays: number;
   criticalAfterDays: number;
   isActive: boolean;
+  boardType: "order_pipeline" | "customers";
+  stageKey: string | null;
+  actionType: AgingAction;
+  /*
+   * จำนวนวันของ auto-archive (แยกจาก Warning/Critical)
+   * null = ไม่ได้ใช้ rule ใบนี้ซ่อนการ์ด
+   */
+  archiveAfterDays: number | null;
+  /*
+   * ชื่อคอลัมน์ที่ stageKey ชี้ไป (server ผูกให้)
+   * null/undefined = หาคอลัมน์ไม่เจอใน DB (ถูกลบไปแล้ว)
+   */
+  stageLabel?: string | null;
   createdAt: string;
   updatedAt: string;
 }

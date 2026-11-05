@@ -14,10 +14,11 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,
 import { RequirePermissions } from '../permissions/decorators/require-permissions.decorator.js';
 import { ProductsService } from './products.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
+import { ListCatalogDto } from './dto/list-catalog.dto.js';
 import { ListProductsDto } from './dto/list-products.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
-import { CreateProductGroupDto } from './dto/product-group.dto.js';
-import { UpdateProductGroupDto } from './dto/product-group.dto.js';
+import { CreateCategoryDto } from './dto/category.dto.js';
+import { UpdateCategoryDto } from './dto/category.dto.js';
 import { CreateProductUnitDto } from './dto/product-unit.dto.js';
 import { UpdateProductUnitDto } from './dto/product-unit.dto.js';
 let ProductsController = class ProductsController {
@@ -31,11 +32,11 @@ let ProductsController = class ProductsController {
     findAll(query) {
         return this.productsService.findAll(query);
     }
-    findAllGroups() {
-        return this.productsService.findAllGroups();
+    findAllGroups(query) {
+        return this.productsService.findAllGroups(query);
     }
-    findAllUnits() {
-        return this.productsService.findAllUnits();
+    findAllUnits(query) {
+        return this.productsService.findAllUnits(query);
     }
     findOne(id) {
         return this.productsService.findOne(id);
@@ -83,14 +84,16 @@ __decorate([
 ], ProductsController.prototype, "findAll", null);
 __decorate([
     Get('groups'),
+    __param(0, Query()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [ListCatalogDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "findAllGroups", null);
 __decorate([
     Get('units'),
+    __param(0, Query()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [ListCatalogDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "findAllUnits", null);
 __decorate([
@@ -127,7 +130,7 @@ __decorate([
     RequirePermissions('products', 'productManagement'),
     __param(0, Body()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [CreateProductGroupDto]),
+    __metadata("design:paramtypes", [CreateCategoryDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "createGroup", null);
 __decorate([
@@ -136,7 +139,7 @@ __decorate([
     __param(0, Param('id', ParseIntPipe)),
     __param(1, Body()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, UpdateProductGroupDto]),
+    __metadata("design:paramtypes", [Number, UpdateCategoryDto]),
     __metadata("design:returntype", void 0)
 ], ProductsController.prototype, "updateGroup", null);
 __decorate([

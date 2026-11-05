@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import type { EntityManager } from 'typeorm';
 
 import { PipelineStagesService } from '../pipeline-stages/pipeline-stages.service.js';
+import { AgingRulesService } from '../aging-rules/aging-rules.service.js';
 import { Customer } from './entities/customer.entity.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { ListCustomersDto } from './dto/list-customers.dto.js';
@@ -21,6 +22,11 @@ export class CustomersService {
     @InjectRepository(Customer)
     private readonly customersRepository: Repository<Customer>,
     private readonly stagesService: PipelineStagesService,
+    /*
+     * edit-lock: ตรวจ Rule ที่ล็อกไม่ให้แก้ไขคอลัมน์นั้น
+     * (การย้ายคอลัมน์ผ่าน payload {status} ยังผ่านเสมอ)
+     */
+    private readonly agingRulesService: AgingRulesService,
   ) {}
 
   async findAll(query: ListCustomersDto) {
@@ -254,6 +260,23 @@ export class CustomersService {
   ) {
     const customer = await this.findOne(customerId);
 
+    /*
+     * edit-lock: บล็อก "การแก้ไขข้อมูล" แต่ไม่บล็อกการลากย้ายคอลัมน์
+     * - payload มีแค่ {status} (ลากการ์ดบนบอร์ด) -> ผ่าน
+     * - มี field อื่น (ชื่อ/อีเมล/โทร/ผู้รับผิดชอบ...) -> ต้องไม่ถูกล็อก
+     */
+    const isStatusOnlyMove = Object.entries(dto).every(
+      ([key, value]) =>
+        key === 'status' || value === undefined,
+    );
+
+    if (!isStatusOnlyMove) {
+      await this.agingRulesService.assertNotEditLocked(
+        'customers',
+        customer.status,
+      );
+    }
+
     if (dto.status !== undefined) {
       await this.assertStageExists(dto.status);
     }
@@ -273,9 +296,18 @@ export class CustomersService {
    * ปิดใช้งานลูกค้า (soft delete)
    * ข้อมูลยังอยู่ในระบบ แค่ถูกซ่อนจากหน้าหลัก
    * และเปิดใช้งานอีกครั้งได้ผ่าน restore()
+   *
+   * edit-lock: การ์ดในคอลัมน์ที่ล็อกแก้ไข -> ปิดใช้งานไม่ได้
+   * (ให้ลากออกก่อน) แต่ restore() ไม่บล็อก กันลูกค้าที่ปิดไปแล้ว
+   * กลับมาเปิดไม่ได้เพราะไม่ขึ้นบนบอร์ดให้ลาก
    */
   async deactivate(customerId: number) {
     const customer = await this.findOne(customerId);
+
+    await this.agingRulesService.assertNotEditLocked(
+      'customers',
+      customer.status,
+    );
 
     customer.isActive = false;
 

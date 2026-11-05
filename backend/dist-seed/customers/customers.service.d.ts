@@ -1,6 +1,7 @@
 import { Repository } from 'typeorm';
 import type { EntityManager } from 'typeorm';
 import { PipelineStagesService } from '../pipeline-stages/pipeline-stages.service.js';
+import { AgingRulesService } from '../aging-rules/aging-rules.service.js';
 import { Customer } from './entities/customer.entity.js';
 import { CreateCustomerDto } from './dto/create-customer.dto.js';
 import { ListCustomersDto } from './dto/list-customers.dto.js';
@@ -8,7 +9,8 @@ import { UpdateCustomerDto } from './dto/update-customer.dto.js';
 export declare class CustomersService {
     private readonly customersRepository;
     private readonly stagesService;
-    constructor(customersRepository: Repository<Customer>, stagesService: PipelineStagesService);
+    private readonly agingRulesService;
+    constructor(customersRepository: Repository<Customer>, stagesService: PipelineStagesService, agingRulesService: AgingRulesService);
     findAll(query: ListCustomersDto): Promise<{
         data: Customer[];
         total: number;

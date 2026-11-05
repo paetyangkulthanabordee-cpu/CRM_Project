@@ -72,8 +72,11 @@ export class WorkflowRule {
   conditionConfig: Record<string, unknown>;
 
   /*
-   * ประเภทเอกสารที่เงื่อนไข "document" ต้องมี (FK -> document_type.id)
-   * nullable: rule ประเภทอื่น (attachment/field/payment) เป็น NULL
+   * ประเภทเอกสารที่เงื่อนไขเรียกร้อง (FK -> document_type.id)
+   * - condition 'document'  : บังคับต้องมีไฟล์ประเภทนี้
+   * - condition 'attachment': ระบุ -> นับเฉพาะไฟล์ประเภทนี้
+   *                         ไม่ระบุ (NULL) -> นับรวมไฟล์ทุกประเภท
+   * - condition อื่น (field/payment): NULL
    * แหล่งความจริงของประเภทเอกสาร — config.docType (string) เก็บไว้เป็น fallback
    * ลบ document_type แล้วค่ากลายเป็น NULL (ON DELETE SET NULL)
    */

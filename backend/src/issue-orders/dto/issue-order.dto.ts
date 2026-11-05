@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
+  IsBoolean,
   IsInt,
   IsNumber,
   IsOptional,
@@ -113,6 +114,16 @@ export class UpdateIssueOrderDto {
   @ValidateNested({ each: true })
   @Type(() => IssueOrderDetailDto)
   details?: IssueOrderDetailDto[];
+
+  /*
+   * สถานะ Archive (ซ่อนออกจากบอร์ด)
+   * false = กลับขึ้นแสดงบน Order Pipeline (ปลดการซ่อน)
+   * true  = ซ่อนออก (ปกติทำโดย Aging Rule อัตโนมัติ ไม่มี UI สร้างเอง)
+   * ⚠ ไม่เกี่ยวกับการลบ — ข้อมูลใบสั่งซื้ออยู่ครบทุกครั้ง
+   */
+  @IsOptional()
+  @IsBoolean()
+  isArchived?: boolean;
 }
 
 export class MoveIssueOrderStageDto {

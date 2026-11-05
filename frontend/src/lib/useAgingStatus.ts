@@ -7,12 +7,18 @@ import type { AgingRule } from "./types";
 /*
  * Time-based Workflow Rules (Aging Rules) ฝั่งหน้าบอร์ด
  *
- * หน้าที่ของ hook นี้คือ "นับอายุ" ของแต่ละการ์ดจาก last_activity_at
+ * หน้าที่ของ hook นี้คือ "นับอายุ" ของแต่ละการ์ดจาก updated_at
  * แล้วเทียบกับ Threshold ที่ Admin ตั้งไว้ในหน้า Workflow Rules แท็บ Aging:
  *
  *   days < warningAfterDays   -> normal (สีปกติ)
  *   days >= warningAfterDays  -> warning (สีเหลือง / border เหลือง)
  *   days >= criticalAfterDays -> critical (สีแดง / border แดง)
+ *
+ * Scope ของ rule (boardType + stageKey) ถูกกรองที่นี่:
+ *   - ใช้เฉพาะ rule ของบอร์ดที่ hook ถูกเรียก (order_pipeline / customers)
+ *   - rule ที่ระบุ stageKey = มีผลเฉพาะการ์ดในคอลัมน์นั้น
+ *     rule ที่ stageKey = null  = มีผลกับทุกคอลัมน์ของบอร์ดนั้น
+ *   - ถ้ามี rule หลายใบเข้ากับการ์ดเดียว ใช้ค่าเข้มงวดที่สุด (วันน้อยสุด)
  *
  * คำนวณฝั่ง client แล้วสุ่มคำนวณใหม่ทุก 1 นาที (และตอนแท็บกลับมา
  * แสดงผล) เพื่อให้สถานะเปลี่ยน Day 3 -> Day 7 ได้เอง
@@ -23,6 +29,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /* ระยะเวลาระหว่างการคำนวณซ้ำอัตโนมัติ */
 const TICK_MS = 60 * 1000;
+
+/* บอร์ดที่ Aging Rule มีผล — ตรงกับค่าในตาราง aging_rules.board_type */
+export type AgingBoard =
+  | "order_pipeline"
+  | "customers";
 
 export type AgingStatus =
   | "normal"
@@ -38,20 +49,27 @@ export interface AgingInfo {
   /* threshold ที่ทำให้เป็นสถานะนี้ (null เมื่อ normal) */
   thresholdDays: number | null;
   /*
-   * true = วันที่ activity อยู่ "ในอนาคต" (ข้อมูลผิด)
-   * การ์ดจะไม่นับเป็น warning/critical แต่โชว์ป้ายเตือนแทน
-   * เพื่อไม่ให้ข้อมูลผิด ๆ ถูกกลืนเป็น "0 วัน" แบบเงียบ ๆ
+   * true = วันที่ของใบสั่งซื้ออยู่ "ในอนาคต" อย่างน้อย 1 วันปฏิทินเต็ม
+   * (ข้อมูลผิด เช่น แก้ใน DB ผิดปี) — การ์ดจะไม่นับเป็น warning/critical
+   * แต่โชว์ป้ายเตือนแทน เพื่อไม่ให้ข้อมูลผิด ๆ ถูกกลืนเป็น "0 วัน" เงียบ ๆ
+   *
+   * เทียบแบบ "วันปฏิทิน" (ไม่ใช่ timestamp) เพื่อไม่ให้
+   * ค่าที่เลยมาไม่กี่ชั่วโมง (timezone/clock skew ตอนแก้ DB ตรง ๆ)
+   * ถูกตีความเป็นอนาคตและขึ้นป้ายโดยไม่จำเป็น
    */
   invalidFuture: boolean;
 }
 
 /*
  * โครงสร้างขั้นต่ำที่ hook ต้องการจาก card
- * (ใบสั่งซื้อส่ง lastActivityAt -> fallback updatedAt -> createdAt)
+ * (ใบสั่งซื้อส่ง updatedAt -> fallback createdAt)
+ *
+ * คีย์ของรายการ: ใบสั่งซื้อใช้ `id`, ลูกค้าใช้ `customerId`
+ * ทั้งสอง optional เพื่อให้ใช้ได้กับ entity ที่ต่างกัน
  */
 interface ActivityStamped {
-  id: number;
-  lastActivityAt?: string | null;
+  id?: number;
+  customerId?: number;
   updatedAt?: string;
   createdAt?: string;
 }
@@ -60,7 +78,6 @@ function resolveSince(
   item: ActivityStamped,
 ): Date | null {
   const raw =
-    item.lastActivityAt ??
     item.updatedAt ??
     item.createdAt;
 
@@ -88,13 +105,22 @@ function startOfLocalDay(ms: number): number {
 
 /*
  * คิดสถานะของ card หนึ่งใบ ณ เวลา nowMs
- * ถ้ามี rule ที่ active หลายใบ ใช้ค่าที่เข้มงวดที่สุด
+ * rules ที่ส่งเข้ามาต้องเป็นของ "บอร์ดเดียวกับการ์ด" และ action = none
+ * ("Color mark") อยู่แล้ว — hook เป็นคนกรองตาม boardType/actionType ให้
+ * (rule auto_archive / edit_lock ไม่เปลี่ยนสีการ์ด)
+ *
+ * stageKey = stage_key ของใบสั่งซื้อ/ลูกค้าใบนี้ (null = ไม่ทราบ)
+ * rule ที่ระบุ stageKey ต้องตรงกับ stageKey นี้จึงมีผล
+ * (rule stageKey = null = ทุกคอลัมน์ ใช้กับทุกใบ)
+ *
+ * ถ้ามี rule หลายใบเข้ากับการ์ดเดียว ใช้ค่าเข้มงวดที่สุด
  * (วันน้อยสุดที่ทำให้ถึงสถานะนั้น)
  */
 export function computeAging(
   item: ActivityStamped,
   rules: AgingRule[],
   nowMs: number,
+  stageKey: string | null = null,
 ): AgingInfo {
   const since = resolveSince(item);
 
@@ -109,12 +135,17 @@ export function computeAging(
   }
 
   /*
-   * วันที่อยู่ในอนาคต (เช่น ถูกแก้ใน DB ผิดปี)
-   * ห้ามปล่อยให้ Math.max(0, ...) กลืนเป็น "0 วัน" เงียบ ๆ
-   * เพราะจะทำให้การ์ดไม่มีวันเปลี่ยนสีและไม่รู้ว่าข้อมูลผิด
+   * วันที่อยู่ในอนาคต "อย่างน้อย 1 วันปฏิทินเต็ม" (เช่น ถูกแก้ใน DB ผิดปี)
    * -> คืนสถานะปกติ + ป้ายเตือนให้หน้าบอร์ดแสดงแทน
+   *
+   * เทียบแบบวันปฏิทินไม่ใช่ timestamp:
+   * ค่าที่เลยมาไม่กี่ชั่วโมง (timezone/clock skew ตอนพิมพ์เวลาใน DB)
+   * จะตกไปอยู่ในกติกา "0 วัน = normal" ตามปกติ ไม่ขึ้นป้ายรบกวน
+   * เพราะระบบก็นับอายุแบบเที่ยงคืนถึงเที่ยงคืนอยู่แล้ว
    */
-  if (since.getTime() > nowMs) {
+  if (
+    startOfLocalDay(since.getTime()) > startOfLocalDay(nowMs)
+  ) {
     return {
       status: "normal",
       days: 0,
@@ -125,7 +156,7 @@ export function computeAging(
   }
 
   /*
-   * จำนวนวันตามปฏิทิน (calendar day) ที่ผ่านไปตั้งแต่ last activity
+   * จำนวนวันตามปฏิทิน (calendar day) ที่ผ่านไปตั้งแต่แก้ไขล่าสุด
    * นับแบบเที่ยงคืนถึงเที่ยงคืนของ timezone ผู้ใช้ + round กันวันมี DST
    * เช่น ไม่มี activity ตั้งแต่ 27 ต.ค. -> 30 ต.ค. = 3 วัน (เข้า rule 3 วันทันที)
    */
@@ -143,6 +174,17 @@ export function computeAging(
 
   for (const rule of rules) {
     if (!rule.isActive) {
+      continue;
+    }
+
+    /*
+     * rule ที่ระบุคอลัมน์ไว้ (stageKey ไม่ null)
+     * มีผลเฉพาะการ์ดในคอลัมน์นั้นเท่านั้น
+     */
+    if (
+      rule.stageKey !== null &&
+      rule.stageKey !== stageKey
+    ) {
       continue;
     }
 
@@ -187,10 +229,16 @@ export function computeAging(
  *   hydration mismatch (server/client เวลาไม่ตรงกัน)
  * - หลัง mount จะคำนวณทันที แล้วสุ่มใหม่ทุก TICK_MS
  *   + ทุกครั้งที่แท็บกลับมาอยู่หน้าจอ (ข้ามแท็บ/สลับแอป)
+ * - boardType = บอร์ดที่กำลังเรียก (rule ของบอร์ดอื่นถูกกรองออก)
+ * - getStageKey = ดึง stage_key ของแต่ละใบ (rule เฉพาะคอลัมน์ใช้เทียบ)
+ *   ส่งเป็น function ระดับ module (identity คงที่) จะได้ไม่ทำให้
+ *   useMemo คำนวณซ้ำทุกครั้งที่ component render
  */
 export function useAgingStatus<T extends ActivityStamped>(
   items: readonly T[],
   rules: AgingRule[],
+  boardType: AgingBoard,
+  getStageKey?: (item: T) => string | null,
 ): Map<number, AgingInfo> {
   const [now, setNow] = useState<number | null>(null);
 
@@ -236,13 +284,36 @@ export function useAgingStatus<T extends ActivityStamped>(
       return map;
     }
 
+    /*
+     * เอาเฉพาะ rule ของบอร์ดนี้ และ "rule ที่ทำหน้าที่เปลี่ยนสีอย่างเดียว"
+     * (action = none / "Color mark") — rule ที่เป็น auto_archive / edit_lock
+     * ทำหน้าที่เฉพาะ action ของตัวเอง ไม่เปลี่ยนสีการ์ด
+     */
+    const boardRules = rules.filter(
+      (rule) =>
+        rule.boardType === boardType &&
+        rule.actionType === "none",
+    );
+
     for (const item of items) {
+      /* คีย์ = ใบสั่งซื้อ (id) หรือลูกค้า (customerId) */
+      const key = item.id ?? item.customerId;
+
+      if (key === undefined) {
+        continue;
+      }
+
       map.set(
-        item.id,
-        computeAging(item, rules, now),
+        key,
+        computeAging(
+          item,
+          boardRules,
+          now,
+          getStageKey ? getStageKey(item) : null,
+        ),
       );
     }
 
     return map;
-  }, [items, rules, now]);
+  }, [items, rules, boardType, getStageKey, now]);
 }

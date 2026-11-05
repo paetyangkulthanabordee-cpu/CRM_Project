@@ -9,11 +9,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Customer } from './entities/customer.entity.js';
 import { CustomersController } from './customers.controller.js';
 import { CustomersService } from './customers.service.js';
+import { AgingRulesModule } from '../aging-rules/aging-rules.module.js';
 let CustomersModule = class CustomersModule {
 };
 CustomersModule = __decorate([
     Module({
         imports: [
+            AgingRulesModule,
             TypeOrmModule.forFeature([Customer]),
         ],
         controllers: [CustomersController],

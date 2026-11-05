@@ -33,6 +33,7 @@ import Divider from "@mui/material/Divider";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import MenuItem from "@mui/material/MenuItem";
+import Radio from "@mui/material/Radio";
 import Skeleton from "@mui/material/Skeleton";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
@@ -60,7 +61,6 @@ interface RuleForm {
   toStageId: string;
   conditionType: WorkflowConditionType;
   minFiles: string;
-  field: string;
   /*
    * id ของแถวในตาราง document_type (ค่าเป็น string แบบ fromStageId)
    * ใช้เฉพาะ conditionType = 'document'
@@ -78,24 +78,14 @@ const emptyForm: RuleForm = {
   toStageId: "",
   conditionType: "attachment",
   minFiles: "1",
-  field: "note",
   docTypeId: "",
   isRequired: true,
   isActive: true,
 };
 
-const CONDITION_TYPES: WorkflowConditionType[] = [
-  "attachment",
-  "field",
-  "document",
-  "payment",
-];
-
-const FIELD_KEYS = ["note", "details", "amount"] as const;
-
 /*
  * icon ของแต่ละประเภทเงื่อนไข
- * ใช้ทั้งแถวในรายการ และการ์ดเลือกประเภทในฟอร์ม
+ * ใช้ทั้งแถวในรายการ (rule เก่า document/payment ยังแสดงได้)
  * เก็บเป็น map คงที่ (ไม่ใช่ฟังก์ชันคืน component)
  * เพื่อให้ component ไม่ถูกสร้างใหม่ระหว่าง render
  */
@@ -358,10 +348,23 @@ export default function MoveRulesTab() {
     const config = rule.conditionConfig;
 
     switch (rule.conditionType) {
-      case "attachment":
-        return t("minFilesValue", {
+      case "attachment": {
+        const base = t("minFilesValue", {
           count: config.minFiles ?? 1,
         });
+
+        /*
+         * rule ที่ระบุประเภท -> แสดง "อย่างน้อย N ไฟล์ · ชื่อประเภท"
+         * ประเภทมาจาก FK ก่อน — rule เก่า fallback config.docType
+         */
+        const docName =
+          docNameById(rule.documentTypeId) ??
+          rule.conditionConfig.docType;
+
+        return docName
+          ? `${base} · ${docLabelOf(docName)}`
+          : base;
+      }
 
       case "field":
         return fieldLabelOf(config.field ?? "note");
@@ -378,7 +381,7 @@ export default function MoveRulesTab() {
         );
 
       default:
-        return t("paymentHint");
+        return t("condPaymentDetail");
     }
   }
 
@@ -400,19 +403,35 @@ export default function MoveRulesTab() {
     return t("condPayment");
   }
 
+  /*
+   * ยกตัวอย่างชื่อเอกสารจริงจากตาราง document_type ในคำอธิบายการ์ด
+   * (เช่น ใบเสนอราคา / ใบแจ้งหนี้ / ใบเสร็จ / เอกสาร PO)
+   * ยังโหลดไม่เสร็จ/ไม่มีแถว -> null ใช้คำอธิบายแบบไม่มีส่วนยกตัวอย่าง
+   */
+  const docTypeExamples =
+    docTypes.length > 0
+      ? docTypes
+          .map((item) => docLabelOf(item.documentType))
+          .join(" / ")
+      : null;
+
   function conditionDesc(
     type: WorkflowConditionType,
   ) {
     if (type === "attachment") {
-      return t("condAttachmentDesc");
-    }
-
-    if (type === "field") {
-      return t("condFieldDesc");
+      return docTypeExamples
+        ? t("condAttachmentDescTypes", {
+            types: docTypeExamples,
+          })
+        : t("condAttachmentDesc");
     }
 
     if (type === "document") {
-      return t("condDocumentDesc");
+      return docTypeExamples
+        ? t("condDocumentDescTypes", {
+            types: docTypeExamples,
+          })
+        : t("condDocumentDesc");
     }
 
     return t("condPaymentDesc");
@@ -424,15 +443,23 @@ export default function MoveRulesTab() {
    */
   function previewAction() {
     if (form.conditionType === "attachment") {
-      return t("actionAttachment", {
-        count: Number(form.minFiles) || 1,
-      });
-    }
+      const count = Number(form.minFiles) || 1;
+      const docName = docNameById(
+        Number(form.docTypeId) || null,
+      );
 
-    if (form.conditionType === "field") {
-      return t("actionField", {
-        field: fieldLabelOf(form.field),
-      });
+      /*
+       * ระบุประเภท -> แนบชื่อเอกสารในประโยค preview ด้วย
+       * ไม่ระบุ -> ประโยคเดิม (นับรวมทุกประเภท)
+       */
+      return docName
+        ? t("actionAttachmentTyped", {
+            count,
+            docType: docLabelOf(docName),
+          })
+        : t("actionAttachment", {
+            count,
+          });
     }
 
     if (form.conditionType === "document") {
@@ -456,17 +483,11 @@ export default function MoveRulesTab() {
     setForm({
       ...emptyForm,
       /*
-       * default ประเภทเอกสาร = purchase_order (เหมือนฟอร์มเดิม)
-       * ถ้าไม่มีในตารางใช้รายการแรกแทน
+       * default เริ่มต้น: condition เป็น attachment อยู่แล้ว (emptyForm)
+       * -> ไม่ระบุประเภท (นับรวมทุกไฟล์) ให้ผู้ใช้เลือกเจาะจงเองถ้าต้องการ
+       * (default purchase_order ใช้ตอนสลับไป condition "document" แทน)
        */
-      docTypeId: String(
-        docTypes.find(
-          (item) =>
-            item.documentType === "purchase_order",
-        )?.id ??
-          docTypes[0]?.id ??
-          "",
-      ),
+      docTypeId: "",
       ...(prefillFromStageId
         ? {
             fromStageId: String(prefillFromStageId),
@@ -478,22 +499,45 @@ export default function MoveRulesTab() {
   }
 
   function openEdit(target: WorkflowRule) {
+    /*
+     * ฟอร์มใหม่มี 1 เงื่อนไข (เอกสารแนบ)
+     * rule เดิมชนิด document/payment/field -> เปิดเป็นประโยค "เอกสารแนบ"
+     * ผลตรวจเท่ากันกับเดิม (document = ประเภท X ≥ 1 ไฟล์,
+     * payment = ใบเสร็จ ≥ 1 ไฟล์) — กดบันทึกแล้วจะถูกแปลง
+     * เป็น condition attachment จริงใน DB
+     * (field ถูกถอดออกจากฟอร์มแล้ว — เปิดแก้ไขจะแปลงเป็น attachment
+     *  กันฟอร์มเปิดมาไม่มีแถว condition ไหนถูกเลือก)
+     */
+    const legacyDocument =
+      target.conditionType === "document" ||
+      target.conditionType === "payment" ||
+      target.conditionType === "field";
+
     setEditing(target);
     setForm({
       ruleName: target.ruleName,
       fromStageId: String(target.fromStageId),
       toStageId: String(target.toStageId),
-      conditionType: target.conditionType,
-      minFiles: String(
-        target.conditionConfig.minFiles ?? 1,
-      ),
-      field: target.conditionConfig.field ?? "note",
+      conditionType: legacyDocument
+        ? "attachment"
+        : target.conditionType,
+      minFiles: legacyDocument
+        ? "1"
+        : String(target.conditionConfig.minFiles ?? 1),
       /*
        * prefill จากคอลัมน์ FK ก่อน — rule เก่าที่ยังไม่มี FK
        * ค่อยหาจาก config.docType (string) ในตาราง
+       * payment ไม่มี FK -> resolve จากแถวประเภท "receipt"
+       * (ยังโหลดรายการประเภทไม่เสร็จ -> ว่าง = ทุกประเภท)
        */
       docTypeId: String(
         target.documentTypeId ??
+          (target.conditionType === "payment"
+            ? docTypes.find(
+                (item) =>
+                  item.documentType === "receipt",
+              )?.id
+            : undefined) ??
           docTypes.find(
             (item) =>
               item.documentType ===
@@ -549,10 +593,21 @@ export default function MoveRulesTab() {
       }
 
       conditionConfig = { minFiles };
-    }
 
-    if (form.conditionType === "field") {
-      conditionConfig = { field: form.field };
+      /*
+       * ระบุประเภท -> rule นับเฉพาะไฟล์ประเภทนั้น
+       * (ส่งทั้ง documentTypeId และ docType แบบ rule ชนิด document)
+       * ไม่ระบุ -> ไม่ส่ง -> นับรวมไฟล์ทุกประเภท (พฤติกรรมเดิม)
+       */
+      const id = Number(form.docTypeId);
+
+      if (id) {
+        documentTypeId = id;
+        conditionConfig = {
+          minFiles,
+          docType: docNameById(id) ?? "",
+        };
+      }
     }
 
     if (form.conditionType === "document") {
@@ -1152,6 +1207,7 @@ export default function MoveRulesTab() {
                 fullWidth
                 size="small"
                 label={t("ruleName")}
+                placeholder={t("ruleNamePlaceholder")}
                 helperText={t("ruleNameHint")}
                 value={form.ruleName}
                 slotProps={{
@@ -1322,118 +1378,181 @@ export default function MoveRulesTab() {
                   text={t("zoneCondition")}
                 />
 
-                <Stack spacing={2}>
+                <Stack spacing={1.25}>
                   {/*
-                      การ์ดเลือกประเภทเงื่อนไข แทน dropdown
-                      เห็นชื่อ + คำอธิบายครบในที่เดียว ไม่ต้องเปิดดูทีละอัน
+                      1 เงื่อนไขแบบ "ประโยค" — อ่านเป็นประโยคสมบูรณ์
+                      control (dropdown/จำนวน) อยู่กลางประโยค
+                      ใช้งานได้เฉพาะแถวที่เลือก (แถวดิ่งอื่น disabled)
+                      * "เอกสารแนบ" = ยุบแนบไฟล์/มีเอกสารประเภท/ใบเสร็จ
+                        (ใบเสร็จ = เลือกประเภทใบเสร็จใน dropdown)
+                      การเลือกแถวด้วย Radio + label (คลิกข้อความก็เลือกได้)
+                      * เดิมมีแถว "ข้อมูลใบสั่งซื้อ" (conditionType = field)
+                        ถูกถอดออกจากฟอร์มแล้ว — rule เก่าชนิดนี้ยังแสดงในตาราง
+                        และตรวจตามเดิม (backend รองรับต่อ)
                   */}
                   <Box
                     role="radiogroup"
                     aria-label={t("conditionType")}
                     sx={{
-                      display: "grid",
-                      gridTemplateColumns: {
-                        xs: "1fr",
-                        sm: "1fr 1fr",
-                      },
+                      display: "flex",
+                      flexDirection: "column",
                       gap: 1,
                     }}
                   >
-                    {CONDITION_TYPES.map((type) => (
-                      <ConditionOptionCard
-                        key={type}
-                        type={type}
-                        selected={
-                          form.conditionType === type
+                    {/* ---- แถว 1: ต้องมีเอกสารแนบ ---- */}
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 1,
+                        p: 1,
+                        border: "1px solid",
+                        borderColor:
+                          form.conditionType === "attachment"
+                            ? "#2563eb"
+                            : "#e8e8f0",
+                        borderRadius: "12px",
+                        bgcolor:
+                          form.conditionType === "attachment"
+                            ? "#eff6ff"
+                            : "#ffffff",
+                        transition:
+                          "border-color .15s ease, background-color .15s ease",
+                      }}
+                    >
+                      <FormControlLabel
+                        sx={{ mr: 0 }}
+                        control={
+                          <Radio
+                            size="small"
+                            disabled={saving}
+                            checked={
+                              form.conditionType === "attachment"
+                            }
+                            onChange={() =>
+                              setForm((current) => ({
+                                ...current,
+                                conditionType: "attachment",
+                                /*
+                                 * เลือกแถวนี้ -> ไม่บังคับประเภท
+                                 * (กัน rule ถูกผูกประเภทหนึ่งโดยไม่ตั้งใจ)
+                                 */
+                                docTypeId: "",
+                              }))
+                            }
+                          />
                         }
-                        disabled={saving}
-                        label={conditionLabel(type)}
-                        description={conditionDesc(type)}
-                        onSelect={() =>
-                          setForm((current) => ({
-                            ...current,
-                            conditionType: type,
-                          }))
+                        label={
+                          <Typography
+                            sx={{
+                              fontWeight: 800,
+                              fontSize: 13,
+                              color:
+                                form.conditionType === "attachment"
+                                  ? "#1d4ed8"
+                                  : "#334155",
+                            }}
+                          >
+                            {t("sentenceHasAttachment")}
+                          </Typography>
                         }
                       />
-                    ))}
+
+                      <TextField
+                        select
+                        size="small"
+                        value={form.docTypeId}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            docTypeId: event.target.value,
+                          }))
+                        }
+                        disabled={
+                          saving ||
+                          form.conditionType !== "attachment"
+                        }
+                        slotProps={{
+                          /*
+                           * displayEmpty: ค่าเริ่มต้นเป็น "" (ไม่ระบุประเภท)
+                           * ไม่งั้น MUI ไม่คำนวณข้อความที่จะแสดง
+                           * (isFilled("") = false) -> ช่องว่างเปล่า
+                           */
+                          select: { displayEmpty: true },
+                        }}
+                        sx={{ minWidth: 190 }}
+                      >
+                        <MenuItem value="">
+                          {t("docTypeAnyOption")}
+                        </MenuItem>
+
+                        {docTypes.map((item) => (
+                          <MenuItem
+                            key={item.id}
+                            value={String(item.id)}
+                          >
+                            {docLabelOf(item.documentType)}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: "#475569",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {t("sentenceAtLeast")}
+                      </Typography>
+
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={form.minFiles}
+                        slotProps={{
+                          htmlInput: { min: 1, max: 50 },
+                        }}
+                        onChange={(event) =>
+                          setForm((current) => ({
+                            ...current,
+                            minFiles: event.target.value,
+                          }))
+                        }
+                        disabled={
+                          saving ||
+                          form.conditionType !== "attachment"
+                        }
+                        sx={{ width: 76 }}
+                      />
+
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: "#475569",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {t("sentenceFilesUnit")}
+                      </Typography>
+                    </Box>
                   </Box>
 
-                  {form.conditionType ===
-                    "attachment" && (
-                    <TextField
-                      fullWidth
-                      size="small"
-                      type="number"
-                      label={t("minFiles")}
-                      helperText={t("minFilesHint")}
-                      value={form.minFiles}
-                      slotProps={{
-                        htmlInput: { min: 1, max: 50 },
-                      }}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          minFiles:
-                            event.target.value,
-                        }))
-                      }
-                      disabled={saving}
-                    />
-                  )}
-
-                  {form.conditionType === "field" && (
-                    <TextField
-                      fullWidth
-                      select
-                      size="small"
-                      label={t("fieldLabel")}
-                      value={form.field}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          field: event.target.value,
-                        }))
-                      }
-                      disabled={saving}
-                    >
-                      {FIELD_KEYS.map((key) => (
-                        <MenuItem key={key} value={key}>
-                          {fieldLabelOf(key)}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  )}
-
-                  {form.conditionType ===
-                    "document" && (
-                    <TextField
-                      fullWidth
-                      select
-                      size="small"
-                      label={t("docTypeLabel")}
-                      value={form.docTypeId}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          docTypeId:
-                            event.target.value,
-                        }))
-                      }
-                      disabled={saving}
-                    >
-                      {docTypes.map((item) => (
-                        <MenuItem
-                          key={item.id}
-                          value={String(item.id)}
-                        >
-                          {docLabelOf(
-                            item.documentType,
-                          )}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  )}
+                  {/*
+                      คำอธิบายของแถวที่เลือก
+                      (attachment ยกตัวอย่างชื่อเอกสารจริง dynamic จากตาราง)
+                  */}
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: "block",
+                      color: "#94a3b8",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {conditionDesc(form.conditionType)}
+                  </Typography>
                 </Stack>
               </Box>
 
@@ -2117,104 +2236,5 @@ function StageMenuItem({
         </Typography>
       )}
     </MenuItem>
-  );
-}
-
-/*
- * การ์ดเลือกประเภทเงื่อนไขในฟอร์ม (แทน dropdown)
- * แสดง icon + ชื่อ + คำอธิบายครบในที่เดียว
- * ใช้ role="radio" เพื่อให้ screen reader ออกเสียงถูก
- */
-function ConditionOptionCard({
-  type,
-  selected,
-  disabled,
-  label,
-  description,
-  onSelect,
-}: {
-  type: WorkflowConditionType;
-  selected: boolean;
-  disabled: boolean;
-  label: string;
-  description: string;
-  onSelect: () => void;
-}) {
-  const Icon = CONDITION_ICONS[type];
-
-  return (
-    <Box
-      component="button"
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      disabled={disabled}
-      onClick={onSelect}
-      sx={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 1.25,
-        p: 1.25,
-        textAlign: "left",
-        font: "inherit",
-        cursor: disabled ? "default" : "pointer",
-        border: "1px solid",
-        borderColor: selected ? "#2563eb" : "#e2e8f0",
-        borderRadius: "12px",
-        bgcolor: selected ? "#eff6ff" : "#ffffff",
-        transition:
-          "border-color .15s ease, background-color .15s ease",
-        "&:hover:not(:disabled)": {
-          borderColor: selected ? "#2563eb" : "#93c5fd",
-        },
-        "&:focus-visible": {
-          outline: "2px solid #2563eb",
-          outlineOffset: 2,
-        },
-        "&:disabled": {
-          opacity: 0.6,
-        },
-      }}
-    >
-      <Box
-        sx={{
-          width: 30,
-          height: 30,
-          borderRadius: "8px",
-          bgcolor: selected ? "#2563eb" : "#e8f1ff",
-          color: selected ? "#ffffff" : "#2563eb",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-      >
-        <Icon sx={{ fontSize: 16 }} />
-      </Box>
-
-      <Box sx={{ minWidth: 0 }}>
-        <Typography
-          sx={{
-            fontWeight: 800,
-            fontSize: 13,
-            color: selected ? "#1d4ed8" : "#334155",
-          }}
-        >
-          {label}
-        </Typography>
-
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            mt: 0.25,
-            color: "#94a3b8",
-            lineHeight: 1.45,
-          }}
-        >
-          {description}
-        </Typography>
-      </Box>
-    </Box>
   );
 }

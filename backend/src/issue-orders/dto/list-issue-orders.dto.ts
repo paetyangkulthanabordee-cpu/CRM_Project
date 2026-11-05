@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 
 export class ListIssueOrdersDto {
   /*
@@ -23,4 +23,17 @@ export class ListIssueOrdersDto {
   @IsOptional()
   @IsInt()
   customerId?: number;
+
+  /*
+   * กรองใบสั่งซื้อที่ถูก Archive (Aging Rule = auto_archive)
+   * - ไม่ส่งพารามนี้  -> ทุกใบ (หน้าอื่น เช่น หน้ารายละเอียดลูกค้า เห็นครบ)
+   * - "false"          -> เฉพาะที่ยังแสดงบนบอร์ด (หน้า Order Pipeline ส่งค่านี้)
+   * - "true"           -> เฉพาะที่ถูกซ่อน
+   *
+   * ใช้ string กับ @IsIn (ไม่ใช่ boolean) เพราะ query string "false"
+   * ถ้าแปลงผิดฝั่งจะกลายเป็นค่า truthy แล้วกรองกลับด้าน
+   */
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  archived?: string;
 }

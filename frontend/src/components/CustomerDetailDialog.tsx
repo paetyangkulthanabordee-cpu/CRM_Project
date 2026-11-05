@@ -12,6 +12,7 @@ import { createTheme, ThemeProvider, useTheme } from "@mui/material/styles";
 import Alert from "@mui/material/Alert";
 import Avatar from "@mui/material/Avatar";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Dialog from "@mui/material/Dialog";
 import DialogContent from "@mui/material/DialogContent";
@@ -28,6 +29,7 @@ import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 
@@ -141,6 +143,14 @@ function CustomerDetailDialogContent({
     useState<number | null>(null);
 
   /*
+   * ตัวกรองช่วงวันที่ (native date input)
+   * ค่าเป็น "YYYY-MM-DD" หรือ "" = ไม่กรองฝั่งนั้น
+   * ใช้กับทุกแท็บ: KPI, กราฟ, ใบสั่งซื้อ, เอกสาร
+   */
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  /*
    * ป้ายประเภทเอกสาร (id -> ชื่อ) ใช้ทั้งแท็บเอกสาร
    * endpoint นี้ไม่ต้องมีสิทธิ์พิเศษ แค่ล็อกอิน
    */
@@ -248,6 +258,93 @@ function CustomerDetailDialogContent({
         ),
     [orders],
   );
+
+  const rangeFiltered = Boolean(dateFrom || dateTo);
+
+  /*
+   * กรองตามช่วงวันที่ (client-side ข้อมูลโหลดครบตอนเปิด dialog แล้ว)
+   * ใบสั่งซื้อกรองด้วยวันที่สร้าง, ไฟล์แนบกรองด้วยวันที่แนบ
+   */
+  const filteredOrders = useMemo(() => {
+    if (!rangeFiltered) {
+      return orders;
+    }
+
+    const start = dateFrom
+      ? new Date(`${dateFrom}T00:00:00`).getTime()
+      : null;
+    const end = dateTo
+      ? new Date(`${dateTo}T23:59:59.999`).getTime()
+      : null;
+
+    return orders.filter((order) => {
+      const time = new Date(order.createdAt).getTime();
+      return (
+        (start === null || time >= start) &&
+        (end === null || time <= end)
+      );
+    });
+  }, [orders, rangeFiltered, dateFrom, dateTo]);
+
+  const filteredAttachments = useMemo(() => {
+    if (!rangeFiltered) {
+      return attachments;
+    }
+
+    const start = dateFrom
+      ? new Date(`${dateFrom}T00:00:00`).getTime()
+      : null;
+    const end = dateTo
+      ? new Date(`${dateTo}T23:59:59.999`).getTime()
+      : null;
+
+    return attachments.filter((item) => {
+      const time = new Date(item.createdAt).getTime();
+      return (
+        (start === null || time >= start) &&
+        (end === null || time <= end)
+      );
+    });
+  }, [attachments, rangeFiltered, dateFrom, dateTo]);
+
+  /*
+   * ช่วงเดือนสำหรับกราฟรายเดือน
+   * ไม่มี filter -> null (กราฟแสดง 6 เดือนล่าสุดตามเดิม)
+   * กรอกวันที่ด้านเดียว -> ขยายอีกด้านออก 5 เดือน
+   */
+  const chartRange = useMemo(() => {
+    if (!rangeFiltered) {
+      return null;
+    }
+
+    const end = dateTo
+      ? new Date(`${dateTo}T23:59:59.999`)
+      : null;
+    const start = dateFrom
+      ? new Date(`${dateFrom}T00:00:00`)
+      : null;
+
+    const from =
+      start ??
+      new Date(
+        (end ?? new Date()).getFullYear(),
+        (end ?? new Date()).getMonth() - 5,
+        1,
+      );
+
+    const to =
+      end ??
+      new Date(
+        from.getFullYear(),
+        from.getMonth() + 5,
+        23,
+        59,
+        59,
+        999,
+      );
+
+    return { from, to };
+  }, [rangeFiltered, dateFrom, dateTo]);
 
   const currentStage = stages.find(
     (stage) => stage.stageKey === info.status,
@@ -497,7 +594,70 @@ function CustomerDetailDialogContent({
           </Alert>
         )}
 
-        <Box sx={{ px: 3, pt: 2 }}>
+        <Box
+          sx={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 1.5,
+            px: 3,
+            pt: 2.5,
+          }}
+        >
+          <TextField
+            size="small"
+            type="date"
+            label={t("filterStart")}
+            value={dateFrom}
+            onChange={(event) =>
+              setDateFrom(event.target.value)
+            }
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                max: dateTo || undefined,
+              },
+            }}
+            sx={{ width: 176 }}
+          />
+
+          <TextField
+            size="small"
+            type="date"
+            label={t("filterEnd")}
+            value={dateTo}
+            onChange={(event) =>
+              setDateTo(event.target.value)
+            }
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                min: dateFrom || undefined,
+              },
+            }}
+            sx={{ width: 176 }}
+          />
+
+          {rangeFiltered && (
+            <Button
+              size="small"
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+              }}
+              sx={{
+                borderRadius: "8px",
+                textTransform: "none",
+                fontWeight: 500,
+                color: palette.text.secondary,
+              }}
+            >
+              {t("clearFilter")}
+            </Button>
+          )}
+        </Box>
+
+        <Box sx={{ px: 3, pt: 1.5 }}>
           <Tabs
             value={tab}
             onChange={(_, next) => setTab(next)}
@@ -537,9 +697,11 @@ function CustomerDetailDialogContent({
         >
           {tab === 0 && (
             <DashboardTab
-              orders={orders}
+              orders={filteredOrders}
               ordersDenied={ordersDenied}
-              attachments={attachments}
+              attachments={filteredAttachments}
+              range={chartRange}
+              rangeFiltered={rangeFiltered}
               loading={loading}
             />
           )}
@@ -711,8 +873,9 @@ function CustomerDetailDialogContent({
                 </Stack>
               ) : (
                 <OrdersTable
-                  orders={orders}
+                  orders={filteredOrders}
                   ordersDenied={ordersDenied}
+                  rangeFiltered={rangeFiltered}
                   expandedOrderId={expandedOrderId}
                   onToggleExpand={(orderId) =>
                     setExpandedOrderId((prev) =>
@@ -737,8 +900,9 @@ function CustomerDetailDialogContent({
                 </Stack>
               ) : (
                 <AttachmentsTable
-                  attachments={attachments}
+                  attachments={filteredAttachments}
                   denied={ordersDenied}
+                  rangeFiltered={rangeFiltered}
                   docTypeLabels={docTypeLabels}
                 />
               )}
@@ -893,10 +1057,12 @@ function TopSellTooltip({
 function AttachmentsTable({
   attachments,
   denied,
+  rangeFiltered,
   docTypeLabels,
 }: {
   attachments: AttachmentRow[];
   denied: boolean;
+  rangeFiltered: boolean;
   docTypeLabels: Record<number, string>;
 }) {
   const t = useTranslations("customerDetail");
@@ -926,7 +1092,13 @@ function AttachmentsTable({
 
   if (attachments.length === 0) {
     return (
-      <EmptyStateBox message={t("noDocuments")} />
+      <EmptyStateBox
+        message={
+          rangeFiltered
+            ? t("noDataInRange")
+            : t("noDocuments")
+        }
+      />
     );
   }
 
@@ -1169,26 +1341,24 @@ function formatCompactBaht(value: number) {
 }
 
 /*
- * ยอดใบสั่งซื้อรายเดือน ย้อนหลัง 6 เดือน
+ * ยอดใบสั่งซื้อรายเดือน
+ * - ไม่ส่ง range -> ย้อนหลัง 6 เดือน (ตามเดิม)
+ * - ส่ง range (ตอนมีตัวกรองวันที่) -> เดือนตั้งแต่ต้นจนจบช่วง
+ *    ถ้ากว้างเกิน 12 เดือน ตัดเหลือ 12 เดือนล่าสุด
  * คืนค่า year + month + label + total
  * (year/month ใช้ตอน drill-down คลิกแท่งกราฟ)
  */
-function buildMonthlyTotals(orders: IssueOrder[]) {
+function buildMonthlyTotals(
+  orders: IssueOrder[],
+  range?: { from: Date; to: Date } | null,
+) {
   const months: {
     key: string;
     label: string;
     total: number;
   }[] = [];
 
-  const now = new Date();
-
-  for (let i = 5; i >= 0; i -= 1) {
-    const date = new Date(
-      now.getFullYear(),
-      now.getMonth() - i,
-      1,
-    );
-
+  const pushMonth = (date: Date) => {
     months.push({
       key: `${date.getFullYear()}-${date.getMonth()}`,
       label: date.toLocaleDateString("th-TH", {
@@ -1196,6 +1366,40 @@ function buildMonthlyTotals(orders: IssueOrder[]) {
       }),
       total: 0,
     });
+  };
+
+  if (range) {
+    const cursor = new Date(
+      range.from.getFullYear(),
+      range.from.getMonth(),
+      1,
+    );
+    const end = new Date(
+      range.to.getFullYear(),
+      range.to.getMonth(),
+      1,
+    );
+
+    while (cursor <= end) {
+      pushMonth(cursor);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+
+    while (months.length > 12) {
+      months.shift();
+    }
+  } else {
+    const now = new Date();
+
+    for (let i = 5; i >= 0; i -= 1) {
+      pushMonth(
+        new Date(
+          now.getFullYear(),
+          now.getMonth() - i,
+          1,
+        ),
+      );
+    }
   }
 
   for (const order of orders) {
@@ -1224,11 +1428,13 @@ function buildMonthlyTotals(orders: IssueOrder[]) {
 function OrdersTable({
   orders,
   ordersDenied,
+  rangeFiltered,
   expandedOrderId,
   onToggleExpand,
 }: {
   orders: IssueOrder[];
   ordersDenied: boolean;
+  rangeFiltered: boolean;
   expandedOrderId: number | null;
   onToggleExpand: (orderId: number) => void;
 }) {
@@ -1244,7 +1450,15 @@ function OrdersTable({
   }
 
   if (orders.length === 0) {
-    return <EmptyStateBox message={t("noOrders")} />;
+    return (
+      <EmptyStateBox
+        message={
+          rangeFiltered
+            ? t("noDataInRange")
+            : t("noOrders")
+        }
+      />
+    );
   }
 
   return (
@@ -1907,6 +2121,14 @@ interface DashboardTabProps {
   orders: IssueOrder[];
   ordersDenied: boolean;
   attachments: AttachmentRow[];
+
+  /*
+   * ช่วงวันที่จากแถบ filter (null = ไม่ได้กรอง)
+   * range = ช่วงสำหรับแกนกราฟรายเดือน
+   * rangeFiltered = กำลังกรองอยู่ (ใช้เปลี่ยนข้อความ/ปิด KPI 6 เดือน)
+   */
+  range: { from: Date; to: Date } | null;
+  rangeFiltered: boolean;
   loading: boolean;
 }
 
@@ -1914,6 +2136,8 @@ function DashboardTab({
   orders,
   ordersDenied,
   attachments,
+  range,
+  rangeFiltered,
   loading,
 }: DashboardTabProps) {
   const t = useTranslations("customerDetail");
@@ -1931,7 +2155,7 @@ function DashboardTab({
     0,
   );
 
-  const monthlyData = buildMonthlyTotals(orders);
+  const monthlyData = buildMonthlyTotals(orders, range);
 
   /*
    * Top Sell: สินค้าที่ลูกค้าสั่งซื้อบ่อยที่สุด (Top 5)
@@ -1986,7 +2210,9 @@ function DashboardTab({
 
   const kpis = [
     {
-      label: t("totalPurchasedAmount"),
+      label: rangeFiltered
+        ? t("totalInRange")
+        : t("totalPurchasedAmount"),
       value: ordersDenied
         ? "—"
         : formatBaht(orderTotal),
@@ -2009,21 +2235,32 @@ function DashboardTab({
       icon: <AttachFileIcon sx={{ fontSize: 20 }} />,
       color: "#0891b2",
     },
-    {
-      label: t("ordersByMonth"),
-      value: ordersDenied
-        ? "—"
-        : formatBaht(
-            monthlyData.reduce(
-              (sum, month) => sum + month.total,
-              0,
+    /*
+     * KPI 6 เดือนซ่อนระหว่างกรองวันที่
+     * เพราะยอดรวมของช่วงที่เลือกแสดงที่ KPI ใบแรกแล้ว
+     * ถ้าแสดงเพิ่มค่าจะซ้ำกันเป๊ะ
+     */
+    ...(!rangeFiltered
+      ? [
+          {
+            label: t("ordersByMonth"),
+            value: ordersDenied
+              ? "—"
+              : formatBaht(
+                  monthlyData.reduce(
+                    (sum, month) => sum + month.total,
+                    0,
+                  ),
+                ),
+            icon: (
+              <AccountBalanceWalletIcon
+                sx={{ fontSize: 20 }}
+              />
             ),
-          ),
-      icon: (
-        <AccountBalanceWalletIcon sx={{ fontSize: 20 }} />
-      ),
-      color: "#16a34a",
-    },
+            color: "#16a34a",
+          },
+        ]
+      : []),
   ];
 
   if (loading) {
@@ -2058,7 +2295,9 @@ function DashboardTab({
           gridTemplateColumns: {
             xs: "1fr 1fr",
             sm: "repeat(3, 1fr)",
-            md: "repeat(4, 1fr)",
+            md: rangeFiltered
+              ? "repeat(3, 1fr)"
+              : "repeat(4, 1fr)",
           },
           gap: 1.5,
         }}
@@ -2150,6 +2389,18 @@ function DashboardTab({
             "& .recharts-rectangle": {
               cursor: "pointer",
             },
+
+            /*
+             * focus ring ของเบราว์เซอร์: ปิด drilldown แล้ว MUI
+             * restore focus มายัง <g> ชั้นแท่ง (recharts-zIndex-layer_300)
+             * ซึ่ง tabindex=-1 และมี outline:auto สี accent ระบบ
+             * bbox ของ <g> ชั้นนี้ = รวมทุกแท่ง -> เห็นเป็นกรอบสี่เหลี่ยม
+             * ครอบแท่งกราฟ ปิดเฉพาะ outline เท่านั้น
+             * (ไม่แตะ fill/stroke ของแท่ง, grid, แกน หรือขอบ card)
+             */
+            "& .recharts-wrapper, & .recharts-wrapper *": {
+              outline: "none",
+            },
           }}
         >
           <Typography
@@ -2167,6 +2418,7 @@ function DashboardTab({
               <BarChart
                 data={topProducts}
                 layout="vertical"
+                accessibilityLayer={false}
                 margin={{
                   top: 0,
                   right: 16,
@@ -2206,9 +2458,7 @@ function DashboardTab({
                   }}
                 />
                 <ChartTooltip
-                  cursor={{
-                    fill: palette.background.paper,
-                  }}
+                  cursor={false}
                   content={
                     <TopSellTooltip palette={palette} />
                   }
@@ -2244,7 +2494,9 @@ function DashboardTab({
               message={
                 ordersDenied
                   ? t("noOrderPermission")
-                  : t("chartNoData")
+                  : rangeFiltered
+                    ? t("noDataInRange")
+                    : t("chartNoData")
               }
             />
           )}
@@ -2259,6 +2511,18 @@ function DashboardTab({
             minWidth: 0,
             "& .recharts-rectangle": {
               cursor: "pointer",
+            },
+
+            /*
+             * focus ring ของเบราว์เซอร์: ปิด drilldown แล้ว MUI
+             * restore focus มายัง <g> ชั้นแท่ง (recharts-zIndex-layer_300)
+             * ซึ่ง tabindex=-1 และมี outline:auto สี accent ระบบ
+             * bbox ของ <g> ชั้นนี้ = รวมทุกแท่ง -> เห็นเป็นกรอบสี่เหลี่ยม
+             * ครอบแท่งกราฟ ปิดเฉพาะ outline เท่านั้น
+             * (ไม่แตะ fill/stroke ของแท่ง, grid, แกน หรือขอบ card)
+             */
+            "& .recharts-wrapper, & .recharts-wrapper *": {
+              outline: "none",
             },
           }}
         >
@@ -2276,6 +2540,7 @@ function DashboardTab({
             >
               <BarChart
                 data={monthlyData}
+                accessibilityLayer={false}
                 margin={{
                   top: 0,
                   right: 8,
@@ -2308,9 +2573,7 @@ function DashboardTab({
                   }}
                 />
                 <ChartTooltip
-                  cursor={{
-                    fill: palette.background.paper,
-                  }}
+                  cursor={false}
                   formatter={(value) =>
                     formatBaht(Number(value))
                   }
@@ -2347,7 +2610,9 @@ function DashboardTab({
               message={
                 ordersDenied
                   ? t("noOrderPermission")
-                  : t("chartNoData")
+                  : rangeFiltered
+                    ? t("noDataInRange")
+                    : t("chartNoData")
               }
             />
           )}

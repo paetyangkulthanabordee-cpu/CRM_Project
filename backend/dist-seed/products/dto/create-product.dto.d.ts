@@ -1,7 +1,7 @@
 export declare class CreateProductDto {
     name: string;
     skuCode?: string;
-    productGroupId: number;
+    categoryId: number;
     description?: string;
     price: number;
     productUnitId: number;

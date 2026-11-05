@@ -1,7 +1,9 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
 import { PipelineStagesService } from '../pipeline-stages/pipeline-stages.service.js';
+import { AgingRulesService } from '../aging-rules/aging-rules.service.js';
 import { CustomersService } from './customers.service.js';
 import { Customer } from './entities/customer.entity.js';
 
@@ -38,6 +40,13 @@ describe('CustomersService', () => {
     exists: vi.fn().mockResolvedValue(true),
   };
 
+  /* edit-lock: ค่าเริ่มต้น = ไม่มี rule ล็อก */
+  const mockAgingRulesService = {
+    assertNotEditLocked: vi
+      .fn()
+      .mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
 
@@ -54,6 +63,9 @@ describe('CustomersService', () => {
       },
     ]);
     mockStagesService.exists.mockResolvedValue(true);
+    mockAgingRulesService.assertNotEditLocked.mockResolvedValue(
+      undefined,
+    );
 
     const module: TestingModule =
       await Test.createTestingModule({
@@ -66,6 +78,10 @@ describe('CustomersService', () => {
           {
             provide: PipelineStagesService,
             useValue: mockStagesService,
+          },
+          {
+            provide: AgingRulesService,
+            useValue: mockAgingRulesService,
           },
         ],
       }).compile();
@@ -119,5 +135,74 @@ describe('CustomersService', () => {
     const [payload] = saved;
 
     expect(payload.assignedId).toBeNull();
+  });
+
+  /*
+   * edit-lock: บล็อก "การแก้ไขข้อมูล"
+   * แต่ payload {status} (การลากการ์ดเปลี่ยนคอลัมน์) ยังผ่านเสมอ
+   */
+  describe('edit-lock', () => {
+    const lockedError = () =>
+      new ForbiddenException({
+        errorCode: 'EDIT_LOCKED',
+        message: 'คอลัมน์นี้ถูกล็อกไม่ให้แก้ไขข้อมูล',
+      });
+
+    beforeEach(() => {
+      mockCustomersRepository.findOne.mockResolvedValue({
+        customerId: 3,
+        status: 'lead',
+        companyName: 'บริษัท เดิม',
+      });
+    });
+
+    it('blocks content edits when the column is locked', async () => {
+      mockAgingRulesService.assertNotEditLocked.mockRejectedValue(
+        lockedError(),
+      );
+
+      await expect(
+        service.update(3, { companyName: 'บริษัท ใหม่' }),
+      ).rejects.toMatchObject({
+        response: { errorCode: 'EDIT_LOCKED' },
+      });
+
+      expect(
+        mockAgingRulesService.assertNotEditLocked,
+      ).toHaveBeenCalledWith('customers', 'lead');
+      expect(
+        mockCustomersRepository.save,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('allows a status-only move even when the column is locked', async () => {
+      mockAgingRulesService.assertNotEditLocked.mockRejectedValue(
+        lockedError(),
+      );
+      mockStagesService.exists.mockResolvedValue(true);
+
+      await service.update(3, { status: 'qualified' });
+
+      expect(
+        mockAgingRulesService.assertNotEditLocked,
+      ).not.toHaveBeenCalled();
+      expect(
+        mockCustomersRepository.save,
+      ).toHaveBeenCalled();
+    });
+
+    it('blocks deactivating a customer in a locked column', async () => {
+      mockAgingRulesService.assertNotEditLocked.mockRejectedValue(
+        lockedError(),
+      );
+
+      await expect(service.deactivate(3)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(
+        mockCustomersRepository.save,
+      ).not.toHaveBeenCalled();
+    });
   });
 });

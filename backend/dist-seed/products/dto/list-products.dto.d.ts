@@ -1,6 +1,7 @@
 export declare class ListProductsDto {
     search?: string;
-    groupId?: number;
+    categoryId?: number;
+    productGroupId?: number;
     page?: number;
     limit?: number;
 }

@@ -32,10 +32,21 @@ let UsersService = class UsersService {
     async verifyPassword(plain, hash) {
         return bcrypt.compare(plain, hash);
     }
-    async findAll() {
-        const users = await this.usersRepository.find({
-            order: { userId: 'ASC' },
-        });
+    async findAll(query = {}) {
+        const search = query.search?.trim();
+        let users;
+        if (search) {
+            users = await this.usersRepository
+                .createQueryBuilder('user')
+                .where('(user.name ILIKE :search OR user.email ILIKE :search OR CAST(user.role AS TEXT) ILIKE :search)', { search: `%${search}%` })
+                .orderBy('user.userId', 'ASC')
+                .getMany();
+        }
+        else {
+            users = await this.usersRepository.find({
+                order: { userId: 'ASC' },
+            });
+        }
         const rows = await this.customersRepository.manager.query(`SELECT assigned_id AS "assignedId",
                 COUNT(*)::int AS count
          FROM customers

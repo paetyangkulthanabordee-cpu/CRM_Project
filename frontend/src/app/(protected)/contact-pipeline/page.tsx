@@ -22,6 +22,7 @@ import Skeleton from "@mui/material/Skeleton";
 import Snackbar from "@mui/material/Snackbar";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 
@@ -30,6 +31,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import EventBusyIcon from "@mui/icons-material/EventBusy";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
 import HistoryIcon from "@mui/icons-material/History";
+import LockOutlineIcon from "@mui/icons-material/LockOutlined";
 import MailOutlineIcon from "@mui/icons-material/MailOutlined";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import PhoneIphoneIcon from "@mui/icons-material/PhoneIphone";
@@ -39,6 +41,7 @@ import SearchOffIcon from "@mui/icons-material/SearchOff";
 import TodayIcon from "@mui/icons-material/Today";
 
 import AddCardDialog from "@/components/AddCardDialog";
+import AgingBadge from "@/components/AgingBadge";
 import CustomersKanbanBoard from "@/components/CustomersKanbanBoard";
 import CustomerDetailDialog, {
   formatDate,
@@ -46,15 +49,21 @@ import CustomerDetailDialog, {
 } from "@/components/CustomerDetailDialog";
 import { api, getErrorMessage } from "@/lib/api";
 import { withQuery } from "@/lib/listQuery";
+import { agingCardStyle } from "@/lib/agingStyle";
 import { useApi } from "@/lib/swr";
+import { useAgingStatus } from "@/lib/useAgingStatus";
+import { useEditLock } from "@/lib/useEditLock";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
 import type {
+  AgingRule,
   Customer,
   PipelineStage,
 } from "@/lib/types";
+
+import type { AgingInfo } from "@/lib/useAgingStatus";
 
 import type { Permissions } from "@/lib/auth";
 
@@ -150,34 +159,66 @@ function bucketRange(bucket: DateBucket): DateRange {
    CARD
    ====================================================== */
 
+/*
+ * stage_key ของลูกค้า = คอลัมน์บนบอร์ด (customers.status)
+ * ใช้เทียบ rule ที่ scope เป็นคอลัมน์ — ฟังก์ชันระดับ module
+ * (identity คงที่) กัน useMemo ใน useAgingStatus รันซ้ำทุก render
+ */
+const getCustomerStageKey = (
+  customer: Customer,
+): string | null => customer.status ?? null;
+
 function PipelineCard({
   customer,
+  aging,
   dragging,
   ghost,
   onOpen,
 }: {
   customer: Customer;
+  /* สถานะอายุจาก Aging Rules (null = ไม่เข้าเงื่อนไข/ยังไม่คำนวณ) */
+  aging?: AgingInfo | null;
   dragging?: boolean;
   ghost?: boolean;
   onOpen: (customer: Customer) => void;
 }) {
   const t = useTranslations("contactPipeline");
+  const tC = useTranslations("common");
 
   const assigned =
     customer.assignedUser?.name ?? null;
+
+  /*
+   * edit-lock: คอลัมน์นี้ถูก Aging Rule ล็อกไม่ให้แก้ไข
+   * -> ขึ้นไอคอนล็อกให้เห็นตั้งแต่บนการ์ด
+   */
+  const editLock = useEditLock(
+    "customers",
+    customer.status ?? null,
+  );
+
+  /*
+   * สีขอบ/เงาตามสถานะอายุ (logic ร่วมทุกบอร์ดที่ lib/agingStyle)
+   * วันที่ในอนาคต (invalidFuture) ไม่ทาสี — ใช้ป้ายเตือนแทน
+   */
+  const { aged, border, hoverBorder, shadow } =
+    agingCardStyle(aging);
 
   return (
     <Card
       data-testid="pipeline-card"
       data-customer-id={customer.customerId}
+      data-aging-status={aging?.status ?? "normal"}
       sx={{
         p: 2,
         borderRadius: "12px",
-        border: "1px solid #e7ebf2",
+        border: aged
+          ? `2px solid ${border}`
+          : "1px solid #e7ebf2",
         bgcolor: "#ffffff",
         boxShadow: dragging
           ? "0 12px 24px rgba(15,23,42,0.15)"
-          : "0 1px 3px rgba(15,23,42,0.04)",
+          : shadow,
         cursor: "pointer",
         opacity: ghost ? 0 : 1,
         pointerEvents: ghost
@@ -185,7 +226,7 @@ function PipelineCard({
           : undefined,
         transition: "box-shadow 150ms ease, opacity 150ms ease",
         "&:hover": {
-          borderColor: "#c7d2fe",
+          borderColor: hoverBorder,
           bgcolor: "#f8fafc",
           boxShadow:
             "0 4px 12px rgba(15,23,42,0.08)",
@@ -215,6 +256,24 @@ function PipelineCard({
           {customer.companyName}
         </Typography>
 
+        {/* ป้าย "N วันไม่มี Activity" / "วันที่ผิดปกติ" (ปกติ = ไม่แสดง) */}
+        <Box sx={{ flexShrink: 0, mt: "2px" }}>
+          <AgingBadge aging={aging} />
+
+          {editLock.locked && (
+            <Tooltip title={tC("editLocked")}>
+              <LockOutlineIcon
+                data-testid="edit-lock-icon"
+                sx={{
+                  fontSize: 15,
+                  color: "#c2410c",
+                  ml: 0.5,
+                  verticalAlign: "middle",
+                }}
+              />
+            </Tooltip>
+          )}
+        </Box>
       </Box>
 
       <Box
@@ -374,6 +433,28 @@ export default function ContactPipelinePage() {
     () => stagesData ?? [],
     [stagesData],
   );
+
+  /*
+   * Aging Rules (Time-based) สำหรับบอร์ดลูกค้า
+   * hook กรองเอาเฉพาะ rule ของบอร์ด customers (board_type = customers)
+   * ส่วน stage_key = เจาะคอลัมน์บนบอร์ดนี้ / null = ทุกคอลัมน์
+   */
+  const { data: agingRulesData } = useApi<AgingRule[]>(
+    ready && user ? "/api/aging-rules" : null,
+  );
+
+  const agingRules = useMemo(
+    () => agingRulesData ?? [],
+    [agingRulesData],
+  );
+
+  const agingMap = useAgingStatus(
+    customers,
+    agingRules,
+    "customers",
+    getCustomerStageKey,
+  );
+
   const [search, setSearch] = useState("");
 
   /*
@@ -628,12 +709,15 @@ export default function ContactPipelinePage() {
     ) => (
       <PipelineCard
         customer={customer}
+        aging={
+          agingMap?.get(customer.customerId) ?? null
+        }
         ghost={state.ghost}
         dragging={state.dragging}
         onOpen={handleOpenCustomer}
       />
     ),
-    [handleOpenCustomer],
+    [handleOpenCustomer, agingMap],
   );
 
   if (!user) {

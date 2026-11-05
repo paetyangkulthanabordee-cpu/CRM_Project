@@ -2,13 +2,14 @@
 
 import { useRef, useState } from "react";
 
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, DragEvent } from "react";
 
 import { useTranslations } from "next-intl";
 
 import AddIcon from "@mui/icons-material/Add";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import CloseIcon from "@mui/icons-material/Close";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import RemoveIcon from "@mui/icons-material/Remove";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import Alert from "@mui/material/Alert";
@@ -33,6 +34,7 @@ import SummaryRow from "@/components/SummaryRow";
 
 import type {
   Customer,
+  DocumentTypeItem,
   OrderPipelineStage,
   Product,
 } from "@/lib/types";
@@ -78,13 +80,26 @@ interface Props {
   saving?: boolean;
 
   /*
+   * รายการประเภทเอกสาร (ตาราง document_type)
+   * ใช้สร้าง dropdown "ประเภทเอกสาร" ของไฟล์แนบ
+   * ดึงไม่ได้/ยังไม่มีแถว -> ไม่แสดง dropdown
+   * ไฟล์จะลงไปช่อง "ไฟล์แนบทั่วไป" เหมือนเดิม
+   */
+  documentTypes?: DocumentTypeItem[];
+
+  /*
    * files = ไฟล์แนบตั้งใจอัปโหลด
    * ส่งแยกจาก payload JSON เพราะ FormData กับ application/json
    * ยิงพร้อมกันไม่ได้ ฝั่งหน้าบอร์ดจะสร้างใบสั่งซื้อก่อนแล้วค่อยอัปโหลดทีละไฟล์
+   *
+   * documentTypeId = ประเภทของไฟล์แนบชุดนี้ทั้งหมด (null = ไม่ระบุ)
+   * ส่งเป็น field ของ FormData ตอนอัปโหลด — ไม่ใช่ของ payload
+   * (backend whitelist: true จะ strip field ที่ไม่รู้จักออกจาก JSON)
    */
   onSave: (
     payload: NewIssueOrder,
     files: File[],
+    documentTypeId: number | null,
   ) => Promise<void>;
 
   onClose: () => void;
@@ -133,11 +148,13 @@ export default function OrderFormDialog({
   customersError = false,
   productsError = false,
   saving = false,
+  documentTypes = [],
   onSave,
   onClose,
 }: Props) {
   const t = useTranslations("orderPipeline");
   const tCommon = useTranslations("common");
+  const tW = useTranslations("workflowRules");
 
   const [customerId, setCustomerId] = useState<
     number | ""
@@ -154,6 +171,18 @@ export default function OrderFormDialog({
    */
   const [files, setFiles] = useState<File[]>([]);
   const [fileError, setFileError] = useState("");
+
+  /*
+   * ประเภทเอกสารของไฟล์แนบชุดนี้ (ใช้ร่วมกันทุกไฟล์ในฟอร์ม)
+   * "" = ไม่ระบุ -> ไฟล์ลงช่อง "ไฟล์แนบทั่วไป" (ค่าเริ่มต้น)
+   * เลือก "ใบเสนอราคา" ฯลฯ -> ไฟล์ลงช่องประเภทนั้นในหน้ารายละเอียด
+   */
+  const [docTypeId, setDocTypeId] = useState<
+    number | ""
+  >("");
+
+  /* กำลังลากไฟล์มาวางบน dropzone -> เส้นกรอบเป็นน้ำเงิน */
+  const [dragging, setDragging] = useState(false);
 
   /* ไฟล์ที่กำลังเปิดดูก่อนอัปโหลด (null = ปิดอยู่) */
   const [previewFile, setPreviewFile] = useState<
@@ -283,7 +312,31 @@ export default function OrderFormDialog({
   /*
    * เช็คชนิดและขนาดไฟล์ฝั่ง client ก่อนบันทึก
    * กันไม่ให้ยิงขึ้น server แล้วค่อย fail (และได้ข้อความไทยทันที)
+   * ใช้ร่วมกันทั้งตอนเลือกจาก input และตอนลากวาง
    */
+  function validateFiles(picked: File[]): boolean {
+    for (const file of picked) {
+      if (
+        !ALLOWED_FILE_TYPES.includes(file.type)
+      ) {
+        setFileError(t("uploadInvalidType"));
+        return false;
+      }
+
+      if (file.size > MAX_FILE_BYTES) {
+        setFileError(t("uploadTooLarge"));
+        return false;
+      }
+
+      if (file.size <= 0) {
+        setFileError(t("uploadError"));
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   function handlePickFiles(
     event: ChangeEvent<HTMLInputElement>,
   ) {
@@ -296,30 +349,44 @@ export default function OrderFormDialog({
 
     setFileError("");
 
-    for (const file of picked) {
-      if (
-        !ALLOWED_FILE_TYPES.includes(file.type)
-      ) {
-        setFileError(t("uploadInvalidType"));
-        return;
-      }
-
-      if (file.size > MAX_FILE_BYTES) {
-        setFileError(t("uploadTooLarge"));
-        return;
-      }
-
-      if (file.size <= 0) {
-        setFileError(t("uploadError"));
-        return;
-      }
-    }
-
     if (picked.length === 0) {
       return;
     }
 
+    if (!validateFiles(picked)) {
+      return;
+    }
+
     setFiles((current) => [...current, ...picked]);
+  }
+
+  /*
+   * วางไฟล์ลงบน dropzone -> เพิ่มเข้ารายการเดียวกับการเลือกไฟล์
+   * (ยังไม่อัปโหลด — ส่งทีเดียวตอนสร้างใบสั่งซื้อสำเร็จ)
+   */
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDragging(false);
+
+    if (saving) {
+      return;
+    }
+
+    const dropped = Array.from(
+      event.dataTransfer.files ?? [],
+    );
+
+    setFileError("");
+
+    if (dropped.length === 0) {
+      return;
+    }
+
+    if (!validateFiles(dropped)) {
+      return;
+    }
+
+    setFiles((current) => [...current, ...dropped]);
   }
 
   function removeFile(index: number) {
@@ -362,6 +429,32 @@ export default function OrderFormDialog({
     vatValid &&
     !saving;
 
+  /*
+   * ชื่อแสดงของประเภทเอกสารจากค่า document_type ในตาราง
+   * ค่าที่รู้จักใช้ label จาก i18n — ค่าอื่น (ประเภทใหม่ที่เพิ่มเอง)
+   * คืนชื่อดิบจากตารางเลย (ห้าม fallback เป็น label ของ PO)
+   * (แบบเดียวกับ OrderDetailDialog / MoveRulesTab)
+   */
+  function docLabelOf(docType: string) {
+    if (docType === "quotation") {
+      return tW("docQuotation");
+    }
+
+    if (docType === "invoice") {
+      return tW("docInvoice");
+    }
+
+    if (docType === "receipt") {
+      return tW("docReceipt");
+    }
+
+    if (docType === "purchase_order") {
+      return tW("docPurchaseOrder");
+    }
+
+    return docType;
+  }
+
   async function handleSubmit() {
     setSubmitted(true);
 
@@ -399,6 +492,7 @@ export default function OrderFormDialog({
         }),
       },
       files,
+      docTypeId === "" ? null : docTypeId,
     );
   }
 
@@ -814,12 +908,16 @@ export default function OrderFormDialog({
           <Box>
             <Stack
               direction="row"
-              spacing={1}
-              sx={{
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
+              spacing={0.75}
+              sx={{ alignItems: "center" }}
             >
+              <AttachFileIcon
+                sx={{
+                  fontSize: 16,
+                  color: "#64748b",
+                }}
+              />
+
               <Typography
                 sx={{
                   fontWeight: 700,
@@ -829,27 +927,267 @@ export default function OrderFormDialog({
               >
                 {t("attachments")}
               </Typography>
-
-              <Button
-                size="small"
-                startIcon={
-                  <AttachFileIcon fontSize="small" />
-                }
-                disabled={saving}
-                onClick={() =>
-                  fileInputRef.current?.click()
-                }
-                sx={{
-                  textTransform: "none",
-                  fontWeight: 700,
-                }}
-              >
-                {t("selectFiles")}
-              </Button>
             </Stack>
 
             {/*
-              input ซ่อนไว้แล้วเรียกด้วยปุ่มด้านบน
+              ประเภทเอกสารของไฟล์แนบชุดนี้ — ใช้ร่วมกันทุกไฟล์ในฟอร์ม
+              ไม่ส่ง/ไม่เลือก -> ไฟล์ลงช่อง "ไฟล์แนบทั่วไป"
+              แสดงเฉพาะเมื่อมีประเภทให้เลือก (โหลดไม่ได้ -> ตกเป็น General)
+            */}
+            {documentTypes.length > 0 && (
+              <TextField
+                select
+                fullWidth
+                size="small"
+                label={tW("docTypeLabel")}
+                value={docTypeId}
+                disabled={saving}
+                onChange={(event) =>
+                  setDocTypeId(
+                    event.target.value === ""
+                      ? ""
+                      : Number(event.target.value),
+                  )
+                }
+                slotProps={{
+                  /*
+                    displayEmpty: ค่าเริ่มต้นเป็น "" (ไม่ระบุประเภท)
+                    ไม่งั้น MUI ไม่คำนวณข้อความที่จะแสดง
+                    (isFilled("") = false) -> ช่องว่างเปล่า
+                  */
+                  select: { displayEmpty: true },
+                  inputLabel: { shrink: true },
+                }}
+                sx={{
+                  mt: 1,
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: "8px",
+                    bgcolor: "#ffffff",
+                  },
+                }}
+              >
+                <MenuItem value="">
+                  {t("genericAttachments")}
+                </MenuItem>
+
+                {documentTypes.map((docType) => (
+                  <MenuItem
+                    key={docType.id}
+                    value={docType.id}
+                  >
+                    {docLabelOf(docType.documentType)}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+
+            {/*
+              dropzone — คลิก/คีย์บอร์ดเพื่อเลือกไฟล์ หรือลากวางลงกรอบ
+              มีไฟล์แล้ว -> แถบไฟล์ทับข้อความ hint ภายในกรอบเดียวกัน
+            */}
+            <Box
+              role="button"
+              tabIndex={saving ? -1 : 0}
+              aria-label={t("chooseFile")}
+              onClick={() => {
+                if (!saving) {
+                  fileInputRef.current?.click();
+                }
+              }}
+              onKeyDown={(event) => {
+                if (
+                  (event.key === "Enter" ||
+                    event.key === " ") &&
+                  !saving
+                ) {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+
+                if (!saving) {
+                  setDragging(true);
+                }
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 0.5,
+                mt: 1,
+                py: 1.5,
+                px: 1,
+                borderRadius: "10px",
+                border: "1px dashed",
+                borderColor: dragging
+                  ? "#2563eb"
+                  : "#cbd5e1",
+                bgcolor: saving ? "#f8fafc" : "#fafcff",
+                opacity: saving ? 0.65 : 1,
+                cursor: saving ? "default" : "pointer",
+                outline: "none",
+                transition: "border-color 120ms ease",
+                "&:hover": saving
+                  ? undefined
+                  : { borderColor: "#2563eb" },
+                "&:focus-visible": {
+                  borderColor: "#2563eb",
+                  boxShadow:
+                    "0 0 0 3px rgba(37,99,235,0.15)",
+                },
+              }}
+            >
+              {files.length === 0 ? (
+                <>
+                  <CloudUploadIcon
+                    sx={{
+                      fontSize: 22,
+                      color: "#94a3b8",
+                    }}
+                  />
+
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "#64748b",
+                      textAlign: "center",
+                    }}
+                  >
+                    {t("dropzoneHint")}{" "}
+                    <Box
+                      component="span"
+                      sx={{
+                        color: "#2563eb",
+                        fontWeight: 700,
+                        textDecoration: "underline",
+                        "&:hover": { color: "#1d4ed8" },
+                      }}
+                    >
+                      {t("chooseFile")}
+                    </Box>
+                  </Typography>
+                </>
+              ) : (
+                /*
+                  รายการไฟล์ที่เลือกไว้ (ยังไม่อัปโหลด)
+                  stopPropagation กันคลิก/คีย์บนแถบฟองขึ้นกรอบ
+                  ซึ่งจะเปิด file picker ทั้งที่ผู้ใช้แค่กดปุ่มดู/ลบ
+                  การลากวางยังทำงานเพราะ onDrop อยู่ที่กรอบนอก
+                */
+                <Stack
+                  spacing={0.75}
+                  sx={{ width: "100%" }}
+                  onClick={(event) =>
+                    event.stopPropagation()
+                  }
+                  onKeyDown={(event) =>
+                    event.stopPropagation()
+                  }
+                >
+                  {files.map((file, index) => (
+                    <Box
+                      key={`${file.name}-${index}`}
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                        px: 1.25,
+                        py: 0.75,
+                        borderRadius: "8px",
+                        border: "1px solid #e7ebf2",
+                        bgcolor: "#fafcff",
+                      }}
+                    >
+                      <AttachFileIcon
+                        sx={{
+                          fontSize: 16,
+                          color: "#94a3b8",
+                          flexShrink: 0,
+                        }}
+                      />
+
+                      <Box
+                        sx={{
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {/*
+                          ชื่อไฟล์คลิกได้ -> เปิดดูไฟล์ก่อนอัปโหลด
+                          ใช้ ButtonBase เพื่อให้กดด้วยคีย์บอร์ดได้ด้วย
+                        */}
+                        <ButtonBase
+                          onClick={() =>
+                            setPreviewFile(file)
+                          }
+                          sx={{
+                            display: "block",
+                            width: "100%",
+                            textAlign: "left",
+                            borderRadius: "4px",
+                          }}
+                        >
+                          <Typography
+                            variant="body2"
+                            noWrap
+                            sx={{
+                              fontWeight: 700,
+                              color: "#172033",
+                              "&:hover": {
+                                color: "#2563eb",
+                              },
+                            }}
+                          >
+                            {file.name}
+                          </Typography>
+                        </ButtonBase>
+
+                        <Typography
+                          variant="caption"
+                          sx={{ color: "#94a3b8" }}
+                        >
+                          {formatFileSize(file.size)}
+                        </Typography>
+                      </Box>
+
+                      <IconButton
+                        size="small"
+                        aria-label={
+                          t("previewAttachment")
+                        }
+                        disabled={saving}
+                        onClick={() =>
+                          setPreviewFile(file)
+                        }
+                        sx={{ color: "#64748b" }}
+                      >
+                        <VisibilityIcon fontSize="small" />
+                      </IconButton>
+
+                      <IconButton
+                        size="small"
+                        aria-label={t("removeFile")}
+                        disabled={saving}
+                        onClick={() =>
+                          removeFile(index)
+                        }
+                        sx={{ color: "#dc2626" }}
+                      >
+                        <RemoveIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  ))}
+                </Stack>
+              )}
+            </Box>
+
+            {/*
+              input ซ่อนไว้แล้วเรียกด้วยการคลิกกรอบ
               accept ตรงกับชนิดไฟล์ที่ backend อนุญาต
             */}
             <input
@@ -879,107 +1217,6 @@ export default function OrderFormDialog({
               >
                 {fileError}
               </Alert>
-            )}
-
-            {files.length > 0 && (
-              <Stack
-                spacing={0.75}
-                sx={{ mt: 1 }}
-              >
-                {files.map((file, index) => (
-                  <Box
-                    key={`${file.name}-${index}`}
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      px: 1.25,
-                      py: 0.75,
-                      borderRadius: "8px",
-                      border: "1px solid #e7ebf2",
-                      bgcolor: "#fafcff",
-                    }}
-                  >
-                    <AttachFileIcon
-                      sx={{
-                        fontSize: 16,
-                        color: "#94a3b8",
-                        flexShrink: 0,
-                      }}
-                    />
-
-                    <Box
-                      sx={{
-                        flex: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      {/*
-                        ชื่อไฟล์คลิกได้ -> เปิดดูไฟล์ก่อนอัปโหลด
-                        ใช้ ButtonBase เพื่อให้กดด้วยคีย์บอร์ดได้ด้วย
-                      */}
-                      <ButtonBase
-                        onClick={() =>
-                          setPreviewFile(file)
-                        }
-                        sx={{
-                          display: "block",
-                          width: "100%",
-                          textAlign: "left",
-                          borderRadius: "4px",
-                        }}
-                      >
-                        <Typography
-                          variant="body2"
-                          noWrap
-                          sx={{
-                            fontWeight: 700,
-                            color: "#172033",
-                            "&:hover": {
-                              color: "#2563eb",
-                            },
-                          }}
-                        >
-                          {file.name}
-                        </Typography>
-                      </ButtonBase>
-
-                      <Typography
-                        variant="caption"
-                        sx={{ color: "#94a3b8" }}
-                      >
-                        {formatFileSize(file.size)}
-                      </Typography>
-                    </Box>
-
-                    <IconButton
-                      size="small"
-                      aria-label={
-                        t("previewAttachment")
-                      }
-                      disabled={saving}
-                      onClick={() =>
-                        setPreviewFile(file)
-                      }
-                      sx={{ color: "#64748b" }}
-                    >
-                      <VisibilityIcon fontSize="small" />
-                    </IconButton>
-
-                    <IconButton
-                      size="small"
-                      aria-label={t("removeFile")}
-                      disabled={saving}
-                      onClick={() =>
-                        removeFile(index)
-                      }
-                      sx={{ color: "#dc2626" }}
-                    >
-                      <RemoveIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                ))}
-              </Stack>
             )}
           </Box>
 

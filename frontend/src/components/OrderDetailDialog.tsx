@@ -14,6 +14,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DownloadIcon from "@mui/icons-material/Download";
+import LockOutlineIcon from "@mui/icons-material/LockOutlined";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import Alert from "@mui/material/Alert";
@@ -40,11 +41,13 @@ import Typography from "@mui/material/Typography";
 
 import { api, getErrorMessage } from "@/lib/api";
 import { formatFileSize, formatMoney, round2 } from "@/lib/format";
+import { useEditLock } from "@/lib/useEditLock";
 
 import FilePreviewDialog from "@/components/FilePreviewDialog";
 import SummaryRow from "@/components/SummaryRow";
 
 import type {
+  DocumentTypeItem,
   IssueOrder,
   IssueOrderAttachment,
   OrderPipelineStage,
@@ -97,7 +100,20 @@ export default function OrderDetailDialog({
   onClose,
 }: Props) {
   const t = useTranslations("orderPipeline");
+  const tC = useTranslations("common");
+  const tW = useTranslations("workflowRules");
   const locale = useLocale();
+
+  /*
+   * edit-lock: Aging Rule ที่ล็อกคอลัมน์นี้ไม่ให้แก้ไขข้อมูล/ไฟล์
+   * การย้ายขั้นตอนยังทำได้เสมอ (ไม่ผ่านเส้นทางการแก้ไข)
+   * ฝั่ง backend บังคับซ้ำด้วย 403 errorCode EDIT_LOCKED
+   */
+  const editLock = useEditLock(
+    "order_pipeline",
+    order.orderPipeline?.stageKey ?? null,
+  );
+  const editLocked = editLock.locked;
 
   /*
    * เก็บขั้นตอนที่ผู้ใช้เลือกไว้ใน dialog เอง
@@ -138,8 +154,18 @@ export default function OrderDetailDialog({
     useState(true);
   const [uploading, setUploading] = useState(false);
 
-  /* สถานะไฟล์ลอยอยู่เหนือ dropzone (เปลี่ยนสีขอบ/พื้น) */
-  const [draggingOver, setDraggingOver] = useState(false);
+  /*
+   * รหัสช่องที่กำลังอัปโหลด/ลากไฟล์มาวาง — แยกสถานะต่อช่อง
+   * ค่า = String(documentTypeId) หรือ "generic" (ช่องไฟล์แนบทั่วไป)
+   * null = ไม่มีกิจกรรม
+   */
+  const [uploadingKey, setUploadingKey] = useState<
+    string | null
+  >(null);
+  const [draggingKey, setDraggingKey] = useState<
+    string | null
+  >(null);
+
   const [deleteAttachment, setDeleteAttachment] =
     useState<IssueOrderAttachment | null>(null);
   const [deletingAttachment, setDeletingAttachment] =
@@ -154,7 +180,28 @@ export default function OrderDetailDialog({
   const [attachmentNoticeType, setAttachmentNoticeType] =
     useState<"success" | "error">("success");
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  /* ref ของ input ซ่อนของแต่ละช่องแนบ (คนละช่องกัน) */
+  const fileInputRefs = useRef<
+    Record<string, HTMLInputElement | null>
+  >({});
+
+  /* =====================================================
+     ประเภทเอกสาร (ตาราง document_type)
+     ใช้แยกช่องแนบไฟล์เป็น 1 ช่องต่อ 1 ประเภท
+     (เช่น ช่องนี้ใบเสนอราคา / ช่องนี้เอกสาร PO ...)
+  ===================================================== */
+
+  const [docTypes, setDocTypes] = useState<
+    DocumentTypeItem[]
+  >([]);
+
+  /*
+   * true หลังยิง API ครั้งแรกเสร็จ (ไม่ว่าสำเร็จหรือไม่)
+   * กันแถบ mark ของ rule ที่ผูกประเภทกระโดดไปมา
+   * ระหว่างที่ยังโหลดรายการประเภทไม่เสร็จ
+   */
+  const [docTypesLoaded, setDocTypesLoaded] =
+    useState(false);
 
   /* =====================================================
      การย้ายขั้นตอนที่ถูก Workflow Rule บล็อก (ยังไม่ได้แนบไฟล์)
@@ -236,55 +283,96 @@ export default function OrderDetailDialog({
    */
 
   /* =====================================================
-     แยก rule ตามชนิด + ค่าที่ระบบช่วยใส่ให้ตอนอัปโหลด
+     แยก rule ตามช่องแนบ (ประเภทเอกสารของแต่ละช่อง)
   ===================================================== */
-
-  /*
-   * ประเภทเอกสารที่ rule ที่ยังไม่ผ่านเรียกร้อง (ถ้ามี)
-   * ระบบใส่ให้อัตโนมัติตอนอัปโหลดไฟล์ — ไม่มี UI ให้เลือกแล้ว
-   * เพื่อให้ rule ชนิด document/payment ตรวจพบไฟล์นี้
-   */
-  const autoDocumentTypeId =
-    ruleChecks.find(
-      (item) => !item.met && item.documentTypeId !== null,
-    )?.documentTypeId ?? null;
 
   /* ทุกข้อผ่านแล้ว -> effect ข้างล่างจะย้ายขั้นตอนให้อัตโนมัติ */
   const rulesAllMet = ruleChecks.every((item) => item.met);
 
-  /*
-   * rule ที่ไม่ผูกกับ field ใด ๆ (ชนิดแนบไฟล์ ทั้งหมด
-   * รวมชนิด field ที่ไม่รู้ตำแหน่ง กันข้อความหาย)
-   * -> แสดง inline ในส่วน "ไฟล์แนบ"
-   */
-  const attachmentInlineRules = ruleChecks.filter(
-    (item) =>
-      item.conditionType !== "field" ||
-      !["note", "details", "amount"].includes(
-        item.fieldKey ?? "",
-      ),
+  /* รหัสช่อง: String(documentTypeId) หรือ "generic" (ช่องไฟล์แนบทั่วไป) */
+  function fieldKeyOf(documentTypeId: number | null) {
+    return documentTypeId === null
+      ? "generic"
+      : String(documentTypeId);
+  }
+
+  const knownTypeIds = new Set(
+    docTypes.map((item) => item.id),
   );
 
   /*
-   * mark ที่ตัวกล่อง dropzone: เปลี่ยน "สีเส้นปะ" เท่านั้น
-   * แดงเมื่อ rule กลุ่มไฟล์ยังไม่ผ่าน (rule ชนิด field ไม่เกี่ยวกับไฟล์
-   * -> ไม่ทำให้กล่องแดง), เขียวเมื่อผ่านครบ, น้ำเงินตอนลากไฟล์มาวาง
+   * rule ที่แสดงใต้ช่องแนบของ documentTypeId ที่ระบุ
+   * - ชนิด attachment/document/payment -> กลุ่มตามประเภทของ rule
+   *   (rule ที่ไม่ระบุประเภท -> null -> ช่อง "ไฟล์แนบทั่วไป")
+   * - ชนิด field ที่ไม่รู้ตำแหน่ง -> ช่อง "ไฟล์แนบทั่วไป"
+   *   (กันข้อความหาย เหมือนที่เคยแสดงรวมในส่วนไฟล์แนบ)
+   * - ชนิด field ที่รู้ตำแหน่ง -> ไปแสดงใต้ field นั้น ไม่อยู่ตรงนี้
+   *
+   * rule ที่ชี้ประเภทซึ่งไม่มีในตาราง (โหลดไม่ได้/ถูกลบไปแล้ว)
+   * ให้รวมไว้ที่ช่อง "ไฟล์แนบทั่วไป" หลังโหลดประเภทเสร็จแล้ว
+   * เพื่อไม่ให้แถบ mark หายไปจาก UI
+   */
+  function fileRulesFor(documentTypeId: number | null) {
+    return ruleChecks.filter((item) => {
+      if (
+        item.conditionType === "field" &&
+        ["note", "details", "amount"].includes(
+          item.fieldKey ?? "",
+        )
+      ) {
+        return false;
+      }
+
+      if (documentTypeId === null) {
+        return (
+          item.documentTypeId === null ||
+          (docTypesLoaded &&
+            item.documentTypeId !== null &&
+            !knownTypeIds.has(item.documentTypeId))
+        );
+      }
+
+      return item.documentTypeId === documentTypeId;
+    });
+  }
+
+  /*
+   * สีเส้นปะของ dropzone แต่ละช่อง: เปลี่ยน "สีเส้นปะ" เท่านั้น
+   * แดงเมื่อ rule ของช่องนั้นยังไม่ผ่าน, เขียวเมื่อผ่านครบ,
+   * น้ำเงินตอนลากไฟล์มาวางที่ช่องนี้, เทาเมื่อไม่มี rule ผูกกับช่อง
+   * (rule ชนิด field ไม่เกี่ยวกับไฟล์ -> ไม่ทำให้ช่องแดง)
    * พื้นหลัง/ไอคอน/ข้อความ ไม่เปลี่ยนสีตาม
    */
-  const dropzoneError =
-    activePendingMove !== null &&
-    attachmentInlineRules.some((item) => !item.met);
+  function dropzoneBorderFor(
+    documentTypeId: number | null,
+  ) {
+    if (editLocked) {
+      return "#e2e8f0";
+    }
 
-  const dropzoneSuccess =
-    activePendingMove !== null && rulesAllMet;
+    if (draggingKey === fieldKeyOf(documentTypeId)) {
+      return "#2563eb";
+    }
 
-  const dropzoneBorder = draggingOver
-    ? "#2563eb"
-    : dropzoneError
-      ? "#dc2626"
-      : dropzoneSuccess
-        ? "#16a34a"
-        : "#cbd5e1";
+    const rules = fileRulesFor(documentTypeId);
+
+    if (
+      activePendingMove !== null &&
+      rules.some((item) => !item.met)
+    ) {
+      return "#dc2626";
+    }
+
+    if (
+      activePendingMove !== null &&
+      rules.length > 0 &&
+      rules.every((item) => item.met)
+    ) {
+      return "#16a34a";
+    }
+
+    return "#cbd5e1";
+  }
 
   /* rule ชนิด field -> ใต้ field ที่เกี่ยวข้อง (note/details/amount) */
   function fieldRule(key: string) {
@@ -404,6 +492,34 @@ export default function OrderDetailDialog({
     };
   }, [order.id, t]);
 
+  /*
+   * โหลดประเภทเอกสารทั้งหมด -> ใช้สร้างช่องแนบ 1 ช่องต่อ 1 ประเภท
+   * ดึงไม่ได้ -> ยังเหลือช่อง "ไฟล์แนบทั่วไป" ให้ใช้งาน (ไม่พัง UI)
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    void api
+      .get<DocumentTypeItem[]>("/api/document-types")
+      .then((response) => {
+        if (!cancelled) {
+          setDocTypes(response.data);
+        }
+      })
+      .catch(() => {
+        // ครั้งหน้าที่เปิด dialog จะลองดึงใหม่เอง
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setDocTypesLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function reloadAttachments() {
     try {
       const response = await api.get<
@@ -417,8 +533,19 @@ export default function OrderDetailDialog({
     }
   }
 
-  async function uploadFile(file: File) {
+  async function uploadFile(
+    file: File,
+    documentTypeId: number | null,
+  ) {
+    /* edit-lock: คอลัมน์นี้ห้ามแก้ไข -> ห้ามอัปโหลดไฟล์ด้วย */
+    if (editLocked) {
+      return;
+    }
+
+    const key = fieldKeyOf(documentTypeId);
+
     setUploading(true);
+    setUploadingKey(key);
     setAttachmentNotice("");
 
     try {
@@ -426,14 +553,14 @@ export default function OrderDetailDialog({
       formData.append("file", file);
 
       /*
-       * ประเภทเอกสารที่ rule ที่ยังไม่ผ่านเรียกร้อง
-       * -> ระบบใส่ให้เองเงียบ ๆ (ไม่มี UI ให้เลือกแล้ว)
-       * ถ้าไม่มี rule ค้างอยู่จะไม่ส่ง -> เป็นไฟล์แนบประเภททั่วไป
+       * ผูกไฟล์กับประเภทของช่องที่อัปโหลดทันที
+       * (rule ชนิด attachment/document/payment ตรวจจากประเภทนี้)
+       * ช่อง "ไฟล์แนบทั่วไป" -> ไม่ส่ง -> ไฟล์ไม่ระบุประเภท (NULL)
        */
-      if (autoDocumentTypeId !== null) {
+      if (documentTypeId !== null) {
         formData.append(
           "documentTypeId",
-          String(autoDocumentTypeId),
+          String(documentTypeId),
         );
       }
 
@@ -470,12 +597,14 @@ export default function OrderDetailDialog({
       setAttachmentNoticeType("error");
     } finally {
       setUploading(false);
+      setUploadingKey(null);
     }
   }
 
-  /* เลือกไฟล์จาก input ที่ซ่อนอยู่ -> ใช้ logic อัปโหลดเดียวกับการลากวาง */
+  /* เลือกไฟล์จาก input ที่ซ่อนอยู่ของช่องนั้น -> ใช้ logic อัปโหลดเดียวกับการลากวาง */
   async function handleUpload(
     event: ChangeEvent<HTMLInputElement>,
+    documentTypeId: number | null,
   ) {
     const file = event.target.files?.[0];
 
@@ -486,13 +615,20 @@ export default function OrderDetailDialog({
       return;
     }
 
-    await uploadFile(file);
+    await uploadFile(file, documentTypeId);
   }
 
-  /* วางไฟล์ลงบน dropzone -> อัปโหลดทันที */
-  function handleDrop(event: DragEvent<HTMLDivElement>) {
+  /* วางไฟล์ลงบน dropzone ของช่องนั้น -> อัปโหลดทันที */
+  function handleDrop(
+    event: DragEvent<HTMLDivElement>,
+    documentTypeId: number | null,
+  ) {
     event.preventDefault();
-    setDraggingOver(false);
+
+    const key = fieldKeyOf(documentTypeId);
+    setDraggingKey((current) =>
+      current === key ? null : current,
+    );
 
     if (uploading) {
       return;
@@ -504,7 +640,7 @@ export default function OrderDetailDialog({
       return;
     }
 
-    void uploadFile(file);
+    void uploadFile(file, documentTypeId);
   }
 
   async function handleDownload(
@@ -534,6 +670,12 @@ export default function OrderDetailDialog({
   }
 
   async function handleDeleteAttachment() {
+    /* edit-lock: คอลัมน์นี้ห้ามแก้ไข -> ลบไฟล์ไม่ได้ */
+    if (editLocked) {
+      setDeleteAttachment(null);
+      return;
+    }
+
     if (!deleteAttachment) {
       return;
     }
@@ -667,6 +809,11 @@ export default function OrderDetailDialog({
    * แล้วเช็ก rule ใหม่ (rule "ต้องกรอกหมายเหตุ" อาจผ่านทันที)
    */
   async function handleSaveNote() {
+    /* edit-lock: คอลัมน์นี้ห้ามแก้ไขข้อมูล */
+    if (editLocked) {
+      return;
+    }
+
     const next = noteDraft.trim();
 
     setSavingNote(true);
@@ -697,6 +844,12 @@ export default function OrderDetailDialog({
   }
 
   async function handleDelete() {
+    /* edit-lock: คอลัมน์นี้ห้ามแก้ไข -> ลบใบสั่งซื้อไม่ได้ */
+    if (editLocked) {
+      setConfirmingDelete(false);
+      return;
+    }
+
     try {
       await onDelete(order.id);
     } catch {
@@ -744,6 +897,417 @@ export default function OrderDetailDialog({
   const noteRule = fieldRule("note");
   const detailsRule = fieldRule("details");
   const amountRule = fieldRule("amount");
+
+  /*
+   * ชื่อแสดงของประเภทเอกสารจากค่า document_type ในตาราง
+   * ค่าที่รู้จักใช้ label จาก i18n — ค่าอื่น (ประเภทใหม่ที่เพิ่มเอง)
+   * คืนชื่อดิบจากตารางเลย (ห้าม fallback เป็น label ของ PO)
+   */
+  function docLabelOf(docType: string) {
+    if (docType === "quotation") {
+      return tW("docQuotation");
+    }
+
+    if (docType === "invoice") {
+      return tW("docInvoice");
+    }
+
+    if (docType === "receipt") {
+      return tW("docReceipt");
+    }
+
+    if (docType === "purchase_order") {
+      return tW("docPurchaseOrder");
+    }
+
+    return docType;
+  }
+
+  /*
+   * แถวไฟล์หนึ่งแถว: ชื่อไฟล์ (คลิกเปิดดู) + ขนาด/วันที่
+   * + ปุ่มดูล่วงหน้า/ดาวน์โหลด/ลบ — ใช้ซ้ำใต้ทุกช่องแนบ
+   */
+  function renderAttachmentRow(item: IssueOrderAttachment) {
+    return (
+      <Box
+        key={item.attachmentId}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 1.25,
+          py: 0.75,
+          borderRadius: "8px",
+          border: "1px solid #e7ebf2",
+          bgcolor: "#fafcff",
+        }}
+      >
+        <AttachFileIcon
+          sx={{
+            fontSize: 16,
+            color: "#94a3b8",
+            flexShrink: 0,
+          }}
+        />
+
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {/*
+            ชื่อไฟล์คลิกได้ -> เปิดดูไฟล์
+            ใช้ ButtonBase เพื่อให้กดด้วยคีย์บอร์ดได้ด้วย
+          */}
+          <ButtonBase
+            onClick={() => setPreviewAttachment(item)}
+            sx={{
+              display: "block",
+              width: "100%",
+              textAlign: "left",
+              borderRadius: "4px",
+            }}
+          >
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                fontWeight: 700,
+                color: "#172033",
+                "&:hover": {
+                  color: "#2563eb",
+                },
+              }}
+            >
+              {item.originalName}
+            </Typography>
+          </ButtonBase>
+
+          <Typography
+            variant="caption"
+            sx={{ color: "#94a3b8" }}
+          >
+            {formatFileSize(item.sizeBytes)} ·{" "}
+            {new Date(item.createdAt).toLocaleDateString(
+              locale,
+            )}
+          </Typography>
+        </Box>
+
+        <IconButton
+          size="small"
+          aria-label={t("previewAttachment")}
+          onClick={() => setPreviewAttachment(item)}
+          sx={{ color: "#64748b" }}
+        >
+          <VisibilityIcon fontSize="small" />
+        </IconButton>
+
+        <IconButton
+          size="small"
+          aria-label={t("downloadAttachment")}
+          onClick={() => void handleDownload(item)}
+          sx={{ color: "#64748b" }}
+        >
+          <DownloadIcon fontSize="small" />
+        </IconButton>
+
+        <IconButton
+          size="small"
+          aria-label={t("deleteAttachment")}
+          disabled={deletingAttachment || editLocked}
+          onClick={() => setDeleteAttachment(item)}
+          sx={{ color: "#dc2626" }}
+        >
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+      </Box>
+    );
+  }
+
+  /*
+   * ช่องแนบไฟล์หนึ่งช่อง — 1 ช่องต่อ 1 ประเภทเอกสาร
+   * (หรือช่อง "ไฟล์แนบทั่วไป" เมื่อ documentTypeId = null)
+   * ภายในช่อง: ป้ายชื่อ + จำนวนไฟล์ + dropzone
+   * + แถบ mark rule ของช่องนี้ + รายการไฟล์ในช่องนี้
+   *
+   * ทุกช่องผ่านฟังก์ชันเดียวกัน ต่างกันที่ documentTypeId
+   * ที่ส่งตอนอัปโหลด (กัน rule ผิดประเภท/ผิดช่อง)
+   */
+  function renderAttachmentField(
+    documentTypeId: number | null,
+    label: string,
+  ) {
+    const key = fieldKeyOf(documentTypeId);
+
+    const files = attachments.filter(
+      (item) =>
+        (item.documentTypeId ?? null) === documentTypeId,
+    );
+
+    const fieldRules = fileRulesFor(documentTypeId);
+    const isUploading = uploading && uploadingKey === key;
+
+    /* กำลังอัปโหลด/ลบ/ถูก edit-lock -> ปิดการคลิกและลากของทุกช่อง */
+    const busy =
+      uploading || deletingAttachment || editLocked;
+
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 0.75,
+          minWidth: 0,
+        }}
+      >
+        {/* หัวช่อง: ชื่อประเภท + จำนวนไฟล์ที่แนบแล้ว */}
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{ alignItems: "center" }}
+        >
+          <Typography
+            variant="subtitle2"
+            sx={{
+              fontWeight: 700,
+              fontSize: 13,
+              color: "#172033",
+            }}
+          >
+            {label}
+          </Typography>
+
+          {files.length > 0 && (
+            <Box
+              component="span"
+              sx={{
+                minWidth: 18,
+                height: 18,
+                px: 0.5,
+                borderRadius: "999px",
+                bgcolor: "#eef2ff",
+                color: "#2563eb",
+                fontWeight: 700,
+                fontSize: 11,
+                lineHeight: "18px",
+                textAlign: "center",
+              }}
+            >
+              {files.length}
+            </Box>
+          )}
+        </Stack>
+
+        {/* dropzone ของช่องนี้: ลากวางหรือคลิก "เลือกไฟล์" */}
+        <Box
+          role="button"
+          tabIndex={busy ? -1 : 0}
+          aria-label={t("chooseFile")}
+          onClick={() => {
+            if (!busy) {
+              fileInputRefs.current[key]?.click();
+            }
+          }}
+          onKeyDown={(event) => {
+            if (
+              (event.key === "Enter" ||
+                event.key === " ") &&
+              !busy
+            ) {
+              event.preventDefault();
+              fileInputRefs.current[key]?.click();
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+
+            if (!busy) {
+              setDraggingKey(key);
+            }
+          }}
+          onDragLeave={() =>
+            setDraggingKey((current) =>
+              current === key ? null : current,
+            )
+          }
+          onDrop={(event) =>
+            handleDrop(event, documentTypeId)
+          }
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 0.5,
+            py: 1.5,
+            px: 1,
+            borderRadius: "10px",
+            border: "1px dashed",
+            /* edit-lock -> กล่องดูถูกปิดใช้งาน (เทาจาง คลิก/ลากไม่ได้) */
+            borderColor: dropzoneBorderFor(documentTypeId),
+            bgcolor: editLocked ? "#f8fafc" : "#fafcff",
+            opacity: editLocked ? 0.65 : 1,
+            cursor:
+              uploading || editLocked
+                ? "default"
+                : "pointer",
+            outline: "none",
+            transition: "border-color 120ms ease",
+            "&:hover":
+              uploading || editLocked
+                ? undefined
+                : { borderColor: "#2563eb" },
+            "&:focus-visible": {
+              borderColor: "#2563eb",
+              boxShadow:
+                "0 0 0 3px rgba(37,99,235,0.15)",
+            },
+          }}
+        >
+          {/*
+            เนื้อหาในกรอบแสดง "อย่างใดอย่างหนึ่ง":
+            - มีไฟล์แล้ว -> แถบไฟล์ทับ hint เลย (ยังคลิกพื้นที่ว่างในกรอบ
+              หรือลากวางเพื่อเพิ่มไฟล์ใหม่ได้เหมือนเดิม)
+            - ยังไม่มีไฟล์ -> icon + ข้อความลากวาง หรือ spinner ตอนกำลังอัปโหลด
+          */}
+          {!attachmentsLoading && files.length > 0 ? (
+            <>
+              {/*
+                รายการไฟล์ในช่องนี้ — อยู่ "ภายใน" กรอบ dropzone
+                (stopPropagation กันคลิก/คีย์บนแถบไฟล์ฟองขึ้นกล่อง
+                ซึ่งจะเปิด file picker ทั้งที่ผู้ใช้แค่กดปุ่มดู/ลบ)
+                การลากวางยังทำงานเพราะ onDrop อยู่ที่กล่องนอก
+              */}
+              <Stack
+                spacing={0.75}
+                sx={{ width: "100%" }}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                {files.map((item) =>
+                  renderAttachmentRow(item),
+                )}
+              </Stack>
+
+              {/* อัปโหลดไฟล์เพิ่ม -> แสดงสถานะใต้แถบ โดยไม่หุ้มแถบไฟล์หาย */}
+              {isUploading && (
+                <Stack
+                  direction="row"
+                  spacing={0.75}
+                  sx={{ alignItems: "center" }}
+                >
+                  <CircularProgress size={14} />
+
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "#64748b",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {t("uploading")}
+                  </Typography>
+                </Stack>
+              )}
+            </>
+          ) : isUploading ? (
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ alignItems: "center" }}
+            >
+              <CircularProgress size={14} />
+
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "#64748b",
+                  fontWeight: 600,
+                }}
+              >
+                {t("uploading")}
+              </Typography>
+            </Stack>
+          ) : (
+            <>
+              <CloudUploadIcon
+                sx={{
+                  fontSize: 22,
+                  color: "#94a3b8",
+                }}
+              />
+
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "#64748b",
+                  textAlign: "center",
+                }}
+              >
+                {t("dropzoneHint")}{" "}
+                <Box
+                  component="span"
+                  sx={{
+                    color: "#2563eb",
+                    fontWeight: 700,
+                    textDecoration: "underline",
+                    "&:hover": { color: "#1d4ed8" },
+                  }}
+                >
+                  {t("chooseFile")}
+                </Box>
+              </Typography>
+            </>
+          )}
+        </Box>
+
+        {/*
+          input ซ่อนของช่องนี้ — เรียกด้วยการคลิกกล่อง/"เลือกไฟล์"
+          accept ตรงกับชนิดไฟล์ที่ backend อนุญาต
+        */}
+        <input
+          ref={(element) => {
+            fileInputRefs.current[key] = element;
+          }}
+          type="file"
+          hidden
+          accept=".pdf,.png,.jpg,.jpeg,.webp,.xls,.xlsx,.doc,.docx"
+          onChange={(event) =>
+            void handleUpload(event, documentTypeId)
+          }
+        />
+
+        {/*
+          แถบ mark ของ rule ที่ผูกกับช่องนี้
+          แสดงเฉพาะตอนถูก Workflow Rule บล็อกการย้ายขั้นตอน
+          (เมื่อผ่านครบแล้วระบบย้ายขั้นตอนให้อัตโนมัติเอง)
+        */}
+        {activePendingMove && fieldRules.length > 0 && (
+          <Stack spacing={0.5}>
+            {fieldRules.map((rule) => (
+              <Box key={rule.ruleId}>
+                {renderRuleLine(rule)}
+              </Box>
+            ))}
+          </Stack>
+        )}
+
+        {/* รายการไฟล์ในช่องนี้ */}
+        {!attachmentsLoading && files.length === 0 && (
+          <Typography
+            variant="caption"
+            sx={{ color: "#94a3b8" }}
+          >
+            {documentTypeId === null
+              ? t("noAttachments")
+              : t("noFilesInField")}
+          </Typography>
+        )}
+      </Box>
+    );
+  }
 
   return (
     <Dialog
@@ -797,6 +1361,22 @@ export default function OrderDetailDialog({
 
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
+          {/*
+            edit-lock: แจ้งว่าคอลัมน์นี้ถูกล็อกไม่ให้แก้ไข
+            และบอกชื่อ rule ที่สั่ง (ปุ่มแก้ไข/อัปโหลด/ลบถูกปิดทั้งหมด)
+          */}
+          {editLocked && (
+            <Alert
+              severity="info"
+              variant="outlined"
+              icon={<LockOutlineIcon fontSize="inherit" />}
+              data-testid="edit-locked-alert"
+            >
+              {tC("editLockedHint", {
+                rule: editLock.ruleName ?? "",
+              })}
+            </Alert>
+          )}
           <Box
             sx={{
               display: "grid",
@@ -1042,7 +1622,7 @@ export default function OrderDetailDialog({
             <Box>{renderRuleLine(amountRule)}</Box>
           )}
 
-          {/* ---- ไฟล์แนบ ---- */}
+          {/* ---- ไฟล์แนบ (แยกช่องตามประเภทเอกสาร) ---- */}
           <Box>
             <Typography
               sx={{
@@ -1054,290 +1634,58 @@ export default function OrderDetailDialog({
               {t("attachments")}
             </Typography>
 
-            {/*
-              dropzone: ลากวางหรือคลิก "เลือกไฟล์"
-              ทุกทางผ่าน uploadFile() เดียวกัน
-              (ได้ documentTypeId อัตโนมัติเมื่อมี rule ค้างอยู่)
-            */}
-            <Box
-              role="button"
-              tabIndex={
-                uploading || deletingAttachment ? -1 : 0
-              }
-              aria-label={t("chooseFile")}
-              onClick={() => {
-                if (!uploading && !deletingAttachment) {
-                  fileInputRef.current?.click();
-                }
-              }}
-              onKeyDown={(event) => {
-                if (
-                  (event.key === "Enter" ||
-                    event.key === " ") &&
-                  !uploading &&
-                  !deletingAttachment
-                ) {
-                  event.preventDefault();
-                  fileInputRef.current?.click();
-                }
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-
-                if (!uploading) {
-                  setDraggingOver(true);
-                }
-              }}
-              onDragLeave={() => setDraggingOver(false)}
-              onDrop={handleDrop}
+            <Typography
+              variant="caption"
               sx={{
-                mt: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 0.75,
-                py: 3,
-                px: 2,
-                borderRadius: "10px",
-                border: "1px dashed",
-                borderColor: dropzoneBorder,
-                bgcolor: "#fafcff",
-                cursor: uploading ? "default" : "pointer",
-                outline: "none",
-                transition: "border-color 120ms ease",
-                "&:hover": uploading
-                  ? undefined
-                  : { borderColor: "#2563eb" },
-                "&:focus-visible": {
-                  borderColor: "#2563eb",
-                  boxShadow:
-                    "0 0 0 3px rgba(37,99,235,0.15)",
-                },
+                display: "block",
+                mt: 0.25,
+                color: "#94a3b8",
               }}
             >
-              {uploading ? (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{ alignItems: "center" }}
+              {t("attachmentsHint")}
+            </Typography>
+
+            {/*
+              ช่องแนบ 1 ช่องต่อ 1 ประเภทเอกสาร
+              (รายการจากตาราง document_type — เพิ่มใหม่จากหน้า admin ได้)
+              ทุกช่องผ่าน renderAttachmentField() เดียวกัน
+              และส่ง documentTypeId ของช่องนั้นตอนอัปโหลด
+            */}
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: {
+                  xs: "1fr",
+                  sm: "1fr 1fr",
+                },
+                gap: 1.25,
+                mt: 1.25,
+              }}
+            >
+              {docTypes.map((docType) => (
+                <Box
+                  key={docType.id}
+                  sx={{ minWidth: 0 }}
                 >
-                  <CircularProgress size={16} />
-
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      color: "#64748b",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {t("uploading")}
-                  </Typography>
-                </Stack>
-              ) : (
-                <>
-                  <CloudUploadIcon
-                    sx={{
-                      fontSize: 34,
-                      color: "#94a3b8",
-                    }}
-                  />
-
-                  <Typography
-                    variant="body2"
-                    sx={{ color: "#64748b" }}
-                  >
-                    {t("dropzoneHint")}{" "}
-                    <Box
-                      component="span"
-                      sx={{
-                        color: "#2563eb",
-                        fontWeight: 700,
-                        textDecoration: "underline",
-                        "&:hover": { color: "#1d4ed8" },
-                      }}
-                    >
-                      {t("chooseFile")}
-                    </Box>
-                  </Typography>
-                </>
-              )}
+                  {renderAttachmentField(
+                    docType.id,
+                    docLabelOf(docType.documentType),
+                  )}
+                </Box>
+              ))}
             </Box>
 
             {/*
-              input ซ่อนไว้ — เรียกด้วยการคลิกกล่อง/"เลือกไฟล์" ด้านบน
-              accept ตรงกับชนิดไฟล์ที่ backend อนุญาต
+              ช่อง "ไฟล์แนบทั่วไป" (ไม่ระบุประเภท):
+              รับไฟล์ทั่วไป/ไฟล์เก่าที่ไม่มีประเภท
+              และ rule ที่ไม่ได้ระบุประเภทก็นับรวมที่ช่องนี้
             */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              hidden
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.xls,.xlsx,.doc,.docx"
-              onChange={(event) =>
-                void handleUpload(event)
-              }
-            />
-
-            {/*
-              inline error (ไม่มีกรอบ ไม่มีพื้นหลัง):
-              สาเหตุที่ย้ายขั้นตอนไม่ได้ + สิ่งที่ต้องแนบ
-              แสดงแทน captionปกติเฉพาะตอนถูก Workflow Rule บล็อก
-              (เมื่อผ่านครบแล้วระบบย้ายขั้นตอนให้อัตโนมัติ
-               จึงไม่มีแถบแจ้ง/ปุ่มยืนยันตรงนี้อีก)
-            */}
-            {activePendingMove &&
-            attachmentInlineRules.length > 0 ? (
-              <Stack spacing={0.5} sx={{ mt: 0.75 }}>
-                {attachmentInlineRules.map((rule) => (
-                  <Box key={rule.ruleId}>
-                    {renderRuleLine(rule)}
-                  </Box>
-                ))}
-              </Stack>
-            ) : (
-              <Typography
-                variant="caption"
-                sx={{
-                  display: "block",
-                  mt: 0.5,
-                  color: "#94a3b8",
-                }}
-              >
-                {t("attachmentsHint")}
-              </Typography>
-            )}
-
-            {!attachmentsLoading &&
-              attachments.length === 0 && (
-                <Typography
-                  variant="body2"
-                  sx={{ mt: 1, color: "#94a3b8" }}
-                >
-                  {t("noAttachments")}
-                </Typography>
+            <Box sx={{ mt: 1.25 }}>
+              {renderAttachmentField(
+                null,
+                t("genericAttachments"),
               )}
-
-            {!attachmentsLoading &&
-              attachments.length > 0 && (
-                <Stack
-                  spacing={0.75}
-                  sx={{ mt: 1 }}
-                >
-                  {attachments.map((item) => (
-                    <Box
-                      key={item.attachmentId}
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        px: 1.25,
-                        py: 0.75,
-                        borderRadius: "8px",
-                        border: "1px solid #e7ebf2",
-                        bgcolor: "#fafcff",
-                      }}
-                    >
-                      <AttachFileIcon
-                        sx={{
-                          fontSize: 16,
-                          color: "#94a3b8",
-                          flexShrink: 0,
-                        }}
-                      />
-
-                      <Box
-                        sx={{
-                          flex: 1,
-                          minWidth: 0,
-                        }}
-                      >
-                        {/*
-                          ชื่อไฟล์คลิกได้ -> เปิดดูไฟล์
-                          ใช้ ButtonBase เพื่อให้กดด้วยคีย์บอร์ดได้ด้วย
-                        */}
-                        <ButtonBase
-                          onClick={() =>
-                            setPreviewAttachment(item)
-                          }
-                          sx={{
-                            display: "block",
-                            width: "100%",
-                            textAlign: "left",
-                            borderRadius: "4px",
-                          }}
-                        >
-                          <Typography
-                            variant="body2"
-                            noWrap
-                            sx={{
-                              fontWeight: 700,
-                              color: "#172033",
-                              "&:hover": {
-                                color: "#2563eb",
-                              },
-                            }}
-                          >
-                            {item.originalName}
-                          </Typography>
-                        </ButtonBase>
-
-                        <Typography
-                          variant="caption"
-                          sx={{ color: "#94a3b8" }}
-                        >
-                          {formatFileSize(
-                            item.sizeBytes,
-                          )}{" "}
-                          ·{" "}
-                          {new Date(
-                            item.createdAt,
-                          ).toLocaleDateString(locale)}
-                        </Typography>
-                      </Box>
-
-                      <IconButton
-                        size="small"
-                        aria-label={
-                          t("previewAttachment")
-                        }
-                        onClick={() =>
-                          setPreviewAttachment(item)
-                        }
-                        sx={{ color: "#64748b" }}
-                      >
-                        <VisibilityIcon fontSize="small" />
-                      </IconButton>
-
-                      <IconButton
-                        size="small"
-                        aria-label={
-                          t("downloadAttachment")
-                        }
-                        onClick={() =>
-                          void handleDownload(item)
-                        }
-                        sx={{ color: "#64748b" }}
-                      >
-                        <DownloadIcon fontSize="small" />
-                      </IconButton>
-
-                      <IconButton
-                        size="small"
-                        aria-label={
-                          t("deleteAttachment")
-                        }
-                        disabled={deletingAttachment}
-                        onClick={() =>
-                          setDeleteAttachment(item)
-                        }
-                        sx={{ color: "#dc2626" }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  ))}
-                </Stack>
-              )}
+            </Box>
 
             {deleteAttachment && (
               <Alert
@@ -1414,7 +1762,7 @@ export default function OrderDetailDialog({
               size="small"
               value={noteDraft}
               placeholder={t("noNote")}
-              disabled={savingNote}
+              disabled={savingNote || editLocked}
               onChange={(event) =>
                 setNoteDraft(event.target.value)
               }
@@ -1436,7 +1784,7 @@ export default function OrderDetailDialog({
                 <Button
                   size="small"
                   variant="contained"
-                  disabled={savingNote}
+                  disabled={savingNote || editLocked}
                   onClick={() => void handleSaveNote()}
                   sx={{
                     textTransform: "none",
@@ -1452,7 +1800,7 @@ export default function OrderDetailDialog({
 
                 <Button
                   size="small"
-                  disabled={savingNote}
+                  disabled={savingNote || editLocked}
                   onClick={() => setNoteDraft(savedNote)}
                   sx={{
                     textTransform: "none",
@@ -1518,7 +1866,9 @@ export default function OrderDetailDialog({
       <DialogActions sx={{ px: 3, pb: 2, pt: 1 }}>
         <Button
           startIcon={<DeleteIcon />}
-          disabled={confirmingDelete || deleting}
+          disabled={
+            confirmingDelete || deleting || editLocked
+          }
           onClick={() => setConfirmingDelete(true)}
           sx={{
             textTransform: "none",

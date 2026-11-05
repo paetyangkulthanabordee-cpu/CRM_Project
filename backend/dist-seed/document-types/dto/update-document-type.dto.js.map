@@ -1,0 +1,1 @@
+{"version":3,"file":"update-document-type.dto.js","sourceRoot":"","sources":["../../../src/document-types/dto/update-document-type.dto.ts"],"names":[],"mappings":";;;;;;;;;AAAA,OAAO,EACL,UAAU,EACV,UAAU,EACV,QAAQ,EACR,SAAS,GACV,MAAM,iBAAiB,CAAC;AAKzB,MAAM,OAAO,qBAAqB;IAKhC,YAAY,CAAU;CACvB;AADC;IAJC,UAAU,EAAE;IACZ,QAAQ,EAAE;IACV,UAAU,EAAE;IACZ,SAAS,CAAC,EAAE,CAAC;;2DACQ"}

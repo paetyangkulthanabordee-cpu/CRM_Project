@@ -134,20 +134,24 @@ export class IssueOrder {
   note: string | null;
 
   /*
-   * เวลาของกิจกรรมล่าสุดบนการ์ด (ย้ายขั้นตอน / แก้ไขข้อมูล / อัปโหลดไฟล์)
-   * ใช้เป็นจุดเริ่มต้นนับเวลาให้ Aging Rules (หน้า Workflow Rules แท็บที่ 2):
-   *   ไม่มี activity ถึง warning_after_days -> การ์ดสีเหลือง
-   *   ไม่มี activity ถึง critical_after_days -> การ์ดสีแดง
+   * Aging Rules (หน้า Workflow Rules แท็บ Aging) นับอายุการ์ดจาก "updated_at"
+   * ของตารางนี้ — คอลัมน์ last_activity_at ถูกยกเลิกไปแล้ว (migration 028)
    *
-   * ทุกครั้งที่มี activity ใหม่ ระบบจะเซ็ตค่านี้เป็นเวลาปัจจุบัน (reset timer)
-   * NULL = ข้อมูลเก่าที่ยังไม่ถูก touch เลย (หน้าบอร์ด fallback ไป updated_at เอง)
+   * ทุกครั้งที่มีกิจกรรม (สร้าง / แก้ไข / ย้ายขั้นตอน / อัปโหลดไฟล์)
+   * TypeORM จะอัปเดต updated_at ให้เอง จึงเท่ากับ reset timer ของ Aging Rules
+   */
+  /*
+   * การ์ดที่ถูก "ซ่อน" (Archive) โดย Aging Rule = auto_archive
+   * - true  -> ไม่ถูกส่งขึ้นบอร์ด Order Pipeline (API กรอง archived=false)
+   * - ⚠ ไม่มีการลบข้อมูลใด ๆ: แถว/รายละเอียด/ไฟล์แนบ อยู่ครบ
+   * ปลดการซ่อน: PATCH {isArchived: false} หรือ UPDATE ตรง ๆ ใน DB
    */
   @Column({
-    name: 'last_activity_at',
-    type: 'timestamptz',
-    nullable: true,
+    name: 'is_archived',
+    type: 'boolean',
+    default: false,
   })
-  lastActivityAt: Date | null;
+  isArchived: boolean;
 
   @CreateDateColumn({
     name: 'created_at',

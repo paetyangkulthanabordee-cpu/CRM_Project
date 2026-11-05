@@ -29,7 +29,6 @@ export class Product {
     type: 'varchar',
     length: 100,
     nullable: true,
-    unique: true,
   })
   skuCode: string | null;
 

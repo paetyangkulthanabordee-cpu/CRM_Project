@@ -44,6 +44,7 @@ export class OrderPipelineService {
       `SELECT order_pipeline_id AS "orderPipelineId",
               COUNT(*)::int AS count
        FROM issue_order
+       WHERE is_archived = false
        GROUP BY order_pipeline_id`,
     );
 
@@ -84,6 +85,12 @@ export class OrderPipelineService {
   async issueOrderCount(
     stageId: number,
   ): Promise<number> {
+    /*
+     * ใช้ตอน "ลบคอลัมน์" -> นับ "รวมใบถูก archive" ด้วย
+     * เพราะ issue_order.order_pipeline_id เป็น FK NOT NULL
+     * (ถ้ามีใบ archive ค้างอยู่แล้วลบคอลัมน์ จะโดน FK error)
+     * ตัวเลขแสดงบนหัวคอลัมน์ใช้คนละ query (findAll) ที่กรอง archive แล้ว
+     */
     const rows: { count: number }[] =
       await this.stagesRepository.manager.query(
         `SELECT COUNT(*)::int AS count

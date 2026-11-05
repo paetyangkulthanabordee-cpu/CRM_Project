@@ -12,30 +12,37 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 import { ConflictException, Injectable, NotFoundException, } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { Product } from './entities/product.entity.js';
+import { Category } from './entities/category.entity.js';
 import { ProductGroup } from './entities/product-group.entity.js';
 import { ProductUnit } from './entities/product-unit.entity.js';
 let ProductsService = class ProductsService {
     productsRepository;
-    groupsRepository;
+    categoriesRepository;
+    productGroupsRepository;
     unitsRepository;
-    constructor(productsRepository, groupsRepository, unitsRepository) {
+    constructor(productsRepository, categoriesRepository, productGroupsRepository, unitsRepository) {
         this.productsRepository = productsRepository;
-        this.groupsRepository = groupsRepository;
+        this.categoriesRepository = categoriesRepository;
+        this.productGroupsRepository = productGroupsRepository;
         this.unitsRepository = unitsRepository;
     }
     async findAll(query) {
         const builder = this.productsRepository
             .createQueryBuilder('product')
-            .leftJoinAndSelect('product.productGroup', 'group')
+            .leftJoinAndSelect('product.category', 'category')
+            .leftJoinAndSelect('category.productGroup', 'group')
             .leftJoinAndSelect('product.productUnit', 'unit')
             .orderBy('product.name', 'ASC');
-        if (query.groupId) {
-            builder.andWhere('product.productGroupId = :groupId', { groupId: query.groupId });
+        if (query.categoryId) {
+            builder.andWhere('product.categoryId = :categoryId', { categoryId: query.categoryId });
+        }
+        if (query.productGroupId) {
+            builder.andWhere('category.productGroupId = :productGroupId', { productGroupId: query.productGroupId });
         }
         if (query.search) {
-            builder.andWhere('(product.name ILIKE :search OR product.sku_code ILIKE :search OR group.name ILIKE :search)', { search: `%${query.search}%` });
+            builder.andWhere('(product.name ILIKE :search OR product.sku_code ILIKE :search OR category.name ILIKE :search OR group.name ILIKE :search)', { search: `%${query.search}%` });
         }
         const page = Math.max(1, Number(query.page) || 1);
         const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
@@ -49,7 +56,9 @@ let ProductsService = class ProductsService {
         const product = await this.productsRepository.findOne({
             where: { id },
             relations: {
-                productGroup: true,
+                category: {
+                    productGroup: true,
+                },
                 productUnit: true,
             },
         });
@@ -63,7 +72,7 @@ let ProductsService = class ProductsService {
             .createQueryBuilder('product')
             .select('COUNT(product.id)', 'totalProducts')
             .addSelect('COALESCE(SUM(product.price), 0)', 'totalValue')
-            .addSelect('(SELECT COUNT(*) FROM product_group)', 'groupCount')
+            .addSelect('(SELECT COUNT(*) FROM category)', 'groupCount')
             .addSelect('(SELECT COUNT(*) FROM product_unit)', 'unitCount')
             .getRawOne();
         return {
@@ -74,13 +83,12 @@ let ProductsService = class ProductsService {
         };
     }
     async create(dto) {
-        await this.assertSkuCodeAvailable(dto.skuCode);
-        await this.assertGroupExists(dto.productGroupId);
+        await this.assertCategoryExists(dto.categoryId);
         await this.assertUnitExists(dto.productUnitId);
         const product = this.productsRepository.create({
             name: dto.name,
             skuCode: dto.skuCode ?? null,
-            productGroupId: dto.productGroupId,
+            categoryId: dto.categoryId,
             description: dto.description ?? null,
             price: dto.price,
             productUnitId: dto.productUnitId,
@@ -89,12 +97,8 @@ let ProductsService = class ProductsService {
     }
     async update(id, dto) {
         const product = await this.findOne(id);
-        if (dto.skuCode !== undefined &&
-            dto.skuCode !== product.skuCode) {
-            await this.assertSkuCodeAvailable(dto.skuCode, id);
-        }
-        if (dto.productGroupId !== undefined) {
-            await this.assertGroupExists(dto.productGroupId);
+        if (dto.categoryId !== undefined) {
+            await this.assertCategoryExists(dto.categoryId);
         }
         if (dto.productUnitId !== undefined) {
             await this.assertUnitExists(dto.productUnitId);
@@ -108,32 +112,18 @@ let ProductsService = class ProductsService {
         await this.productsRepository.remove(product);
         return { id, deleted: true };
     }
-    normalizeSkuCode(skuCode) {
-        const trimmed = (skuCode ?? '').trim();
-        return trimmed === '' ? null : trimmed;
-    }
-    async assertSkuCodeAvailable(skuCode, ignoreId) {
-        const normalized = this.normalizeSkuCode(skuCode);
-        if (!normalized) {
-            return;
-        }
-        const query = this.productsRepository
-            .createQueryBuilder('product')
-            .where('product.sku_code = :skuCode', {
-            skuCode: normalized,
+    async assertCategoryExists(categoryId) {
+        const count = await this.categoriesRepository.count({
+            where: { id: categoryId },
         });
-        if (ignoreId !== undefined) {
-            query.andWhere('product.id != :id', {
-                id: ignoreId,
-            });
-        }
-        const clash = await query.getOne();
-        if (clash) {
-            throw new ConflictException(`รหัสสินค้า (SKU Code) "${normalized}" ถูกใช้ไปแล้ว`);
+        if (count === 0) {
+            throw new NotFoundException('ไม่พบหมวดหมู่สินค้าที่เลือก');
         }
     }
     async assertGroupExists(groupId) {
-        const count = await this.groupsRepository.count({ where: { id: groupId } });
+        const count = await this.productGroupsRepository.count({
+            where: { id: groupId },
+        });
         if (count === 0) {
             throw new NotFoundException('ไม่พบกลุ่มสินค้าที่เลือก');
         }
@@ -144,61 +134,86 @@ let ProductsService = class ProductsService {
             throw new NotFoundException('ไม่พบหน่วยสินค้าที่เลือก');
         }
     }
-    async findAllGroups() {
-        const groups = await this.groupsRepository.find({
+    async findAllGroups(query = {}) {
+        const search = query.search?.trim();
+        const groups = await this.categoriesRepository.find({
             order: { name: 'ASC' },
+            relations: {
+                productGroup: true,
+            },
+            ...(search
+                ? { where: { name: ILike(`%${search}%`) } }
+                : {}),
         });
         const counts = await this.productsRepository
             .createQueryBuilder('product')
-            .select('product.productGroupId', 'productGroupId')
+            .select('product.categoryId', 'categoryId')
             .addSelect('COUNT(product.id)', 'count')
-            .groupBy('product.productGroupId')
+            .groupBy('product.categoryId')
             .getRawMany();
         const countMap = new Map(counts.map((row) => [
-            Number(row.productGroupId),
+            Number(row.categoryId),
             Number(row.count),
         ]));
         return groups.map((group) => ({
             id: group.id,
             name: group.name,
             description: group.description,
+            productGroupId: group.productGroupId,
+            productGroup: group.productGroup
+                ? {
+                    id: group.productGroup.id,
+                    name: group.productGroup.name,
+                }
+                : null,
             productCount: countMap.get(group.id) ?? 0,
         }));
     }
     async createGroup(dto) {
-        const group = this.groupsRepository.create({
+        if (dto.productGroupId !== undefined) {
+            await this.assertGroupExists(dto.productGroupId);
+        }
+        const group = this.categoriesRepository.create({
             name: dto.name,
             description: dto.description ?? null,
+            productGroupId: dto.productGroupId ?? null,
         });
-        return this.groupsRepository.save(group);
+        return this.categoriesRepository.save(group);
     }
     async updateGroup(id, dto) {
         const group = await this.findGroup(id);
+        if (typeof dto.productGroupId === 'number') {
+            await this.assertGroupExists(dto.productGroupId);
+        }
         const changes = Object.fromEntries(Object.entries(dto).filter(([, value]) => value !== undefined));
         Object.assign(group, changes);
-        return this.groupsRepository.save(group);
+        return this.categoriesRepository.save(group);
     }
     async removeGroup(id) {
         const group = await this.findGroup(id);
-        const count = await this.productsRepository.count({ where: { productGroupId: id } });
+        const count = await this.productsRepository.count({ where: { categoryId: id } });
         if (count > 0) {
-            throw new ConflictException(`ลบไม่ได้ เพราะกลุ่ม "${group.name}" ยังมีสินค้าอยู่ ${count} รายการ กรุณาย้ายสินค้าออกก่อน`);
+            throw new ConflictException(`ลบไม่ได้ เพราะหมวดหมู่ "${group.name}" ยังมีสินค้าอยู่ ${count} รายการ กรุณาย้ายสินค้าออกก่อน`);
         }
-        await this.groupsRepository.remove(group);
+        await this.categoriesRepository.remove(group);
         return { id, deleted: true };
     }
     async findGroup(id) {
-        const group = await this.groupsRepository.findOne({
+        const group = await this.categoriesRepository.findOne({
             where: { id },
         });
         if (!group) {
-            throw new NotFoundException('ไม่พบกลุ่มสินค้านี้');
+            throw new NotFoundException('ไม่พบหมวดหมู่สินค้านี้');
         }
         return group;
     }
-    async findAllUnits() {
+    async findAllUnits(query = {}) {
+        const search = query.search?.trim();
         const units = await this.unitsRepository.find({
             order: { name: 'ASC' },
+            ...(search
+                ? { where: { name: ILike(`%${search}%`) } }
+                : {}),
         });
         const counts = await this.productsRepository
             .createQueryBuilder('product')
@@ -249,9 +264,11 @@ let ProductsService = class ProductsService {
 ProductsService = __decorate([
     Injectable(),
     __param(0, InjectRepository(Product)),
-    __param(1, InjectRepository(ProductGroup)),
-    __param(2, InjectRepository(ProductUnit)),
+    __param(1, InjectRepository(Category)),
+    __param(2, InjectRepository(ProductGroup)),
+    __param(3, InjectRepository(ProductUnit)),
     __metadata("design:paramtypes", [Repository,
+        Repository,
         Repository,
         Repository])
 ], ProductsService);

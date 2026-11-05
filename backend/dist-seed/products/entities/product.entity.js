@@ -8,7 +8,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 import { Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn, } from 'typeorm';
-import { ProductGroup } from './product-group.entity.js';
+import { Category } from './category.entity.js';
 import { ProductUnit } from './product-unit.entity.js';
 const priceTransformer = {
     to: (value) => value,
@@ -18,11 +18,11 @@ let Product = class Product {
     id;
     name;
     skuCode;
-    productGroupId;
+    categoryId;
+    category;
     description;
     price;
     productUnitId;
-    productGroup;
     productUnit;
 };
 __decorate([
@@ -41,17 +41,23 @@ __decorate([
         type: 'varchar',
         length: 100,
         nullable: true,
-        unique: true,
     }),
     __metadata("design:type", Object)
 ], Product.prototype, "skuCode", void 0);
 __decorate([
     Column({
-        name: 'product_group_id',
+        name: 'category_id',
         type: 'int',
     }),
     __metadata("design:type", Number)
-], Product.prototype, "productGroupId", void 0);
+], Product.prototype, "categoryId", void 0);
+__decorate([
+    ManyToOne(() => Category),
+    JoinColumn({
+        name: 'category_id',
+    }),
+    __metadata("design:type", Category)
+], Product.prototype, "category", void 0);
 __decorate([
     Column({
         type: 'text',
@@ -76,13 +82,6 @@ __decorate([
     }),
     __metadata("design:type", Number)
 ], Product.prototype, "productUnitId", void 0);
-__decorate([
-    ManyToOne(() => ProductGroup),
-    JoinColumn({
-        name: 'product_group_id',
-    }),
-    __metadata("design:type", ProductGroup)
-], Product.prototype, "productGroup", void 0);
 __decorate([
     ManyToOne(() => ProductUnit),
     JoinColumn({

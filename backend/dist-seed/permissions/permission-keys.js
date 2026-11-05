@@ -2,6 +2,7 @@ import { UserRole } from '../users/entities/user.entity.js';
 export const PERMISSION_KEYS = [
     'dashboard',
     'customers',
+    'salesPipeline',
     'orderPipeline',
     'documents',
     'products',
@@ -16,6 +17,7 @@ export const EDITABLE_ROLES = [
 export const ADMIN_PERMISSIONS = {
     dashboard: true,
     customers: true,
+    salesPipeline: true,
     orderPipeline: true,
     documents: true,
     products: true,
@@ -30,6 +32,7 @@ export const DEFAULT_ROLE_PERMISSIONS = {
     [UserRole.MANAGER]: {
         dashboard: true,
         customers: true,
+        salesPipeline: true,
         orderPipeline: true,
         documents: true,
         products: true,
@@ -42,6 +45,7 @@ export const DEFAULT_ROLE_PERMISSIONS = {
     [UserRole.SALES]: {
         dashboard: true,
         customers: true,
+        salesPipeline: true,
         orderPipeline: true,
         documents: true,
         products: true,
@@ -57,6 +61,7 @@ export function toPermissionSet(granted) {
     return {
         dashboard: granted.dashboard === true,
         customers: granted.customers === true,
+        salesPipeline: granted.salesPipeline === true,
         orderPipeline: granted.orderPipeline === true,
         documents: granted.documents === true,
         products: granted.products === true,

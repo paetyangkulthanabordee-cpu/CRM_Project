@@ -21,8 +21,10 @@ import Typography from "@mui/material/Typography";
 
 import AddIcon from "@mui/icons-material/Add";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
+import LockOutlineIcon from "@mui/icons-material/LockOutlined";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 
+import AgingBadge from "@/components/AgingBadge";
 import KanbanBoard from "@/components/KanbanBoard";
 import OrderDetailDialog from "@/components/OrderDetailDialog";
 import OrderFormDialog from "@/components/OrderFormDialog";
@@ -31,10 +33,12 @@ import type { NewIssueOrder } from "@/components/OrderFormDialog";
 
 import { api, getErrorCode, getErrorMessage, getErrorPayload } from "@/lib/api";
 import { withQuery } from "@/lib/listQuery";
+import { agingCardStyle } from "@/lib/agingStyle";
 import { useApi } from "@/lib/swr";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import { useSession } from "@/lib/useSession";
 import { useAgingStatus } from "@/lib/useAgingStatus";
+import { useEditLock } from "@/lib/useEditLock";
 import { formatMoney } from "@/lib/format";
 
 import type { AgingInfo } from "@/lib/useAgingStatus";
@@ -42,6 +46,7 @@ import type { AgingInfo } from "@/lib/useAgingStatus";
 import type {
   AgingRule,
   Customer,
+  DocumentTypeItem,
   IssueOrder,
   OrderPipelineStage,
   PendingStageMove,
@@ -53,6 +58,15 @@ import type {
 /* =====================================================
    CARD (การ์ดใบสั่งซื้อหนึ่งใบ)
 ===================================================== */
+
+/*
+ * stage_key ของใบสั่งซื้อ — ใช้เทียบ rule ที่ scope เป็นคอลัมน์
+ * วางเป็นฟังก์ชันระดับ module (identity คงที่)
+ * กันไม่ให้ useMemo ใน useAgingStatus คำนวณซ้ำทุกครั้งที่ render
+ */
+const getOrderStageKey = (
+  order: IssueOrder,
+): string | null => order.orderPipeline?.stageKey ?? null;
 
 function OrderCard({
   order,
@@ -72,34 +86,28 @@ function OrderCard({
   onOpen: (order: IssueOrder) => void;
 }) {
   const t = useTranslations("orderPipeline");
+  const tC = useTranslations("common");
   const locale = useLocale();
+
+  /*
+   * edit-lock: คอลัมน์นี้ถูก Aging Rule ล็อกไม่ให้แก้ไข
+   * -> ขึ้นไอคอนล็อกให้เห็นตั้งแต่บนการ์ด (เปิดฟอร์มแล้วก็ปุ่มถูกปิด)
+   */
+  const editLock = useEditLock(
+    "order_pipeline",
+    order.orderPipeline?.stageKey ?? null,
+  );
 
   const lines = order.details ?? [];
   const firstProduct = lines[0]?.product?.name ?? null;
   const stage = order.orderPipeline;
 
-  const aged = aging && aging.status !== "normal";
-
   /*
-   * วันที่ activity อยู่ในอนาคต (ข้อมูลผิด)
-   * ระบบไม่ทาสีขอบและไม่นับอายุ แต่โชว์ป้ายเตือนสีส้มแทน
+   * สถานะอายุ -> สีขอบ/เงา (logic ร่วมทุกบอร์ดที่ lib/agingStyle)
+   * วันที่ในอนาคต (invalidFuture) ไม่ทาสี — ใช้ป้ายเตือนแทน
    */
-  const futureWarning = aging?.invalidFuture === true;
-
-  /*
-   * สีขอบตามสถานะอายุ (Aging Rules)
-   * ปกติ = ขอบเทาเดิม / warning = เหลือง / critical = แดง
-   * ค่าสถานะชนะ hover เพราะต้องเห็นสีเต็ม ๆ เสมอ
-   */
-  const borderColor = !aging || aging.status === "normal"
-    ? "#e7ebf2"
-    : aging.status === "warning"
-      ? "#f59e0b"
-      : "#ef4444";
-
-  const hoverBorderColor = !aging || aging.status === "normal"
-    ? "#c7d2fe"
-    : borderColor;
+  const { aged, border, hoverBorder, shadow } =
+    agingCardStyle(aging);
 
   return (
     <Card
@@ -110,21 +118,19 @@ function OrderCard({
         p: 2,
         borderRadius: "12px",
         border: aged
-          ? `2px solid ${borderColor}`
+          ? `2px solid ${border}`
           : "1px solid #e7ebf2",
         bgcolor: "#ffffff",
         boxShadow: dragging
           ? "0 12px 24px rgba(15,23,42,0.15)"
-          : aged
-            ? `0 1px 3px ${borderColor}33`
-            : "0 1px 3px rgba(15,23,42,0.04)",
+          : shadow,
         cursor: "pointer",
         opacity: ghost ? 0 : 1,
         pointerEvents: ghost ? "none" : undefined,
         transition:
           "box-shadow 150ms ease, opacity 150ms ease, border-color 150ms ease",
         "&:hover": {
-          borderColor: hoverBorderColor,
+          borderColor: hoverBorder,
           bgcolor: "#f8fafc",
           boxShadow:
             "0 4px 12px rgba(15,23,42,0.08)",
@@ -160,56 +166,19 @@ function OrderCard({
             #{order.id}
           </Typography>
 
-          {futureWarning && (
-            <Tooltip title={t("agingFutureTooltip")}>
-              <Typography
-                sx={{
-                  px: 0.75,
-                  py: 0.25,
-                  borderRadius: "6px",
-                  bgcolor: "#ffedd5",
-                  color: "#c2410c",
-                  fontSize: 11,
-                  fontWeight: 800,
-                  lineHeight: 1.4,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {t("agingFutureWarning")}
-              </Typography>
-            </Tooltip>
-          )}
+          <AgingBadge aging={aging} />
 
-          {aged && (
-            <Tooltip
-              title={t("agingTooltip", {
-                days: aging.days,
-                date: new Date(
-                  aging.since,
-                ).toLocaleString(locale),
-              })}
-            >
-              <Typography
+          {editLock.locked && (
+            <Tooltip title={tC("editLocked")}>
+              <LockOutlineIcon
+                data-testid="edit-lock-icon"
                 sx={{
-                  px: 0.75,
-                  py: 0.25,
-                  borderRadius: "6px",
-                  bgcolor:
-                    aging.status === "warning"
-                      ? "#fef3c7"
-                      : "#fee2e2",
-                  color:
-                    aging.status === "warning"
-                      ? "#b45309"
-                      : "#b91c1c",
-                  fontSize: 11,
-                  fontWeight: 800,
-                  lineHeight: 1.4,
-                  whiteSpace: "nowrap",
+                  fontSize: 15,
+                  color: "#c2410c",
+                  mt: "3px",
+                  flexShrink: 0,
                 }}
-              >
-                {t("agingDays", { count: aging.days })}
-              </Typography>
+              />
             </Tooltip>
           )}
         </Stack>
@@ -425,26 +394,48 @@ export default function OrderPipelinePage() {
     300,
   );
 
+  /*
+   * หน้าบอร์ดยิง API ด้วย archived=false เสมอ
+   * -> การ์ดที่ถูก Aging Rule ซ่อน (auto_archive) "ไม่ถูกดึงมาแสดงเลย"
+   *    (server-side filter ไม่ใช่ fetch แล้วกรองฝั่ง UI)
+   * หน้าอื่น (เช่น หน้ารายละเอียดลูกค้า) ไม่ได้ส่งพารามนี้ -> เห็นครบทุกใบ
+   */
+  const boardUrl = useMemo(
+    () => withQuery(baseUrl, { archived: "false" }),
+    [baseUrl],
+  );
+
   const listUrl = useMemo(
     () =>
       withQuery(baseUrl, {
         search: debouncedSearch,
+        archived: "false",
       }),
     [baseUrl, debouncedSearch],
   );
+
+  /*
+   * รายการใบสั่งซื้อ: refocus + ทุก 60 วินาที (override default ของ useApi)
+   * เพื่อให้การ์ดที่ถูก "Aging Rule = Auto Archive" ซ่อนไป
+   * หายจากบอร์ดเองโดยไม่ต้องกด Refresh
+   */
+  const ordersRefreshOptions = {
+    revalidateOnFocus: true,
+    refreshInterval: 60 * 1000,
+  };
 
   const {
     data: allOrdersData,
     isLoading: allLoading,
     mutate: reloadBase,
-  } = useApi<IssueOrder[]>(baseUrl);
+  } = useApi<IssueOrder[]>(boardUrl, ordersRefreshOptions);
 
   const {
     data: ordersData,
     isLoading: listLoading,
     error: ordersError,
     mutate: reloadList,
-  } = useApi<IssueOrder[]>(listUrl);
+  } = useApi<IssueOrder[]>(listUrl, ordersRefreshOptions);
 
   const loading = allLoading || listLoading;
 
@@ -468,6 +459,7 @@ export default function OrderPipelinePage() {
    * Administration -> Workflow Rules -> แท็บ Aging
    * เก็บ Threshold ให้เปลี่ยนสีการ์ดเมื่อไม่มี activity
    * อ่านได้ทุกคนที่ login (ไม่จำกัดสิทธิ์ administration)
+   * -> hook จะกรองเอาเฉพาะ rule ของบอร์ด order_pipeline ไปใช้
    *
    * หน้านี้ refocus/refreshInterval เอง (override default ของ useApi)
    * เพราะถ้า Admin แก้ Threshold ขณะบอร์ดเปิดค้างอยู่
@@ -505,6 +497,16 @@ export default function OrderPipelinePage() {
       : null,
   );
 
+  /*
+   * ประเภทเอกสาร (ตาราง document_type) — สำหรับ dropdown "ประเภทเอกสาร"
+   * ในฟอร์มเพิ่มใบสั่งซื้อ กันไฟล์แนบลงไปช่อง "ไฟล์แนบทั่วไป" หมด
+   * ดึงเฉพาะตอนเปิดฟอร์มเหมือนลูกค้า/สินค้า
+   * GET ไม่จำกัดสิทธิ์ (อ่านได้ทุกคนที่ login)
+   */
+  const { data: documentTypesData } = useApi<
+    DocumentTypeItem[]
+  >(addOpen && ready && user ? "/api/document-types" : null);
+
   const orders = useMemo(
     () => allOrdersData ?? [],
     [allOrdersData],
@@ -541,11 +543,16 @@ export default function OrderPipelinePage() {
 
   /*
    * สถานะอายุของทุกการ์ด (Map<orderId, AgingInfo>)
-   * คำนวณจาก last_activity_at เทียบกับ threshold ของ rule
+   * คำนวณจาก updated_at ของใบสั่งซื้อเทียบกับ threshold ของ rule
    * แล้วสุ่มคำนวณใหม่เองทุก 1 นาที/ตอนแท็บกลับมาแสดงผล
    * -> การ์ดเปลี่ยน Day 3 -> Day 7 ได้โดยไม่ต้องกด Refresh
    */
-  const agingMap = useAgingStatus(boardOrders, agingRules);
+  const agingMap = useAgingStatus(
+    boardOrders,
+    agingRules,
+    "order_pipeline",
+    getOrderStageKey,
+  );
 
   /*
    * บันทึกขั้นตอนใหม่ของการ์ด
@@ -660,6 +667,7 @@ export default function OrderPipelinePage() {
     async (
       payload: NewIssueOrder,
       files: File[],
+      documentTypeId: number | null,
     ): Promise<void> => {
       setSaving(true);
 
@@ -685,6 +693,18 @@ export default function OrderPipelinePage() {
         for (const file of files) {
           const formData = new FormData();
           formData.append("file", file);
+
+          /*
+           * ผูกไฟล์กับประเภทที่ผู้ใช้เลือกไว้ในฟอร์ม
+           * -> ไฟล์ไปลงช่องประเภทนั้นในหน้ารายละเอียด
+           * ไม่เลือก (null) -> ไม่ส่ง -> ลงช่อง "ไฟล์แนบทั่วไป"
+           */
+          if (documentTypeId !== null) {
+            formData.append(
+              "documentTypeId",
+              String(documentTypeId),
+            );
+          }
 
           try {
             await api.post(
@@ -1066,6 +1086,7 @@ export default function OrderPipelinePage() {
         customersError={Boolean(customersError)}
         productsError={Boolean(productsError)}
         saving={saving}
+        documentTypes={documentTypesData ?? []}
         onSave={handleCreate}
         onClose={() => setAddOpen(false)}
       />

@@ -1,19 +1,22 @@
 import { Repository } from 'typeorm';
 import { CreateProductDto } from './dto/create-product.dto.js';
+import { ListCatalogDto } from './dto/list-catalog.dto.js';
 import { ListProductsDto } from './dto/list-products.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
-import { CreateProductGroupDto } from './dto/product-group.dto.js';
-import { UpdateProductGroupDto } from './dto/product-group.dto.js';
+import { CreateCategoryDto } from './dto/category.dto.js';
+import { UpdateCategoryDto } from './dto/category.dto.js';
 import { CreateProductUnitDto } from './dto/product-unit.dto.js';
 import { UpdateProductUnitDto } from './dto/product-unit.dto.js';
 import { Product } from './entities/product.entity.js';
+import { Category } from './entities/category.entity.js';
 import { ProductGroup } from './entities/product-group.entity.js';
 import { ProductUnit } from './entities/product-unit.entity.js';
 export declare class ProductsService {
     private readonly productsRepository;
-    private readonly groupsRepository;
+    private readonly categoriesRepository;
+    private readonly productGroupsRepository;
     private readonly unitsRepository;
-    constructor(productsRepository: Repository<Product>, groupsRepository: Repository<ProductGroup>, unitsRepository: Repository<ProductUnit>);
+    constructor(productsRepository: Repository<Product>, categoriesRepository: Repository<Category>, productGroupsRepository: Repository<ProductGroup>, unitsRepository: Repository<ProductUnit>);
     findAll(query: ListProductsDto): Promise<{
         data: Product[];
         total: number;
@@ -33,24 +36,28 @@ export declare class ProductsService {
         id: number;
         deleted: boolean;
     }>;
-    private normalizeSkuCode;
-    private assertSkuCodeAvailable;
+    private assertCategoryExists;
     private assertGroupExists;
     private assertUnitExists;
-    findAllGroups(): Promise<{
+    findAllGroups(query?: ListCatalogDto): Promise<{
         id: number;
         name: string;
         description: string | null;
+        productGroupId: number | null;
+        productGroup: {
+            id: number;
+            name: string;
+        } | null;
         productCount: number;
     }[]>;
-    createGroup(dto: CreateProductGroupDto): Promise<ProductGroup>;
-    updateGroup(id: number, dto: UpdateProductGroupDto): Promise<ProductGroup>;
+    createGroup(dto: CreateCategoryDto): Promise<Category>;
+    updateGroup(id: number, dto: UpdateCategoryDto): Promise<Category>;
     removeGroup(id: number): Promise<{
         id: number;
         deleted: boolean;
     }>;
     private findGroup;
-    findAllUnits(): Promise<{
+    findAllUnits(query?: ListCatalogDto): Promise<{
         id: number;
         name: string;
         productCount: number;

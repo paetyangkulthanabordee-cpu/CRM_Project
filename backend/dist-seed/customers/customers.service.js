@@ -14,13 +14,16 @@ import { Injectable, NotFoundException, } from '@nestjs/common';
 import { InjectRepository, } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PipelineStagesService } from '../pipeline-stages/pipeline-stages.service.js';
+import { AgingRulesService } from '../aging-rules/aging-rules.service.js';
 import { Customer } from './entities/customer.entity.js';
 let CustomersService = class CustomersService {
     customersRepository;
     stagesService;
-    constructor(customersRepository, stagesService) {
+    agingRulesService;
+    constructor(customersRepository, stagesService, agingRulesService) {
         this.customersRepository = customersRepository;
         this.stagesService = stagesService;
+        this.agingRulesService = agingRulesService;
     }
     async findAll(query) {
         const builder = this.customersRepository
@@ -33,10 +36,8 @@ let CustomersService = class CustomersService {
         else {
             builder.andWhere('customer.isActive = true');
         }
-        if (query.status) {
-            builder.andWhere('customer.status = :status', {
-                status: query.status,
-            });
+        if (query.status && query.status.length > 0) {
+            builder.andWhere('customer.status IN (:...status)', { status: query.status });
         }
         if (query.search) {
             builder.andWhere('(customer.companyName ILIKE :search OR customer.email ILIKE :search OR customer.phone ILIKE :search OR assigned.name ILIKE :search)', { search: `%${query.search}%` });
@@ -45,6 +46,27 @@ let CustomersService = class CustomersService {
             builder.andWhere('customer.createdAt >= :dateFrom', {
                 dateFrom: query.dateFrom,
             });
+        }
+        if (query.dateTo) {
+            if (query.dateTo.length === 10) {
+                const nextDay = new Date(`${query.dateTo}T00:00:00Z`);
+                nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+                builder.andWhere('customer.createdAt < :dateTo', { dateTo: nextDay.toISOString() });
+            }
+            else {
+                builder.andWhere('customer.createdAt <= :dateTo', { dateTo: query.dateTo });
+            }
+        }
+        const assignedIds = query.assignedId ?? [];
+        const includeUnassigned = query.unassigned === true;
+        if (assignedIds.length > 0 && includeUnassigned) {
+            builder.andWhere('(customer.assignedId IN (:...assignedIds) OR customer.assignedId IS NULL)', { assignedIds });
+        }
+        else if (assignedIds.length > 0) {
+            builder.andWhere('customer.assignedId IN (:...assignedIds)', { assignedIds });
+        }
+        else if (includeUnassigned) {
+            builder.andWhere('customer.assignedId IS NULL');
         }
         const page = Math.max(1, Number(query.page) || 1);
         const limit = Math.min(100, Math.max(1, Number(query.limit) || 50));
@@ -70,14 +92,14 @@ let CustomersService = class CustomersService {
     async firstStageKey() {
         const stages = await this.stagesService.findAll();
         if (stages.length === 0) {
-            throw new NotFoundException('ยังไม่มีคอลัมน์ในท่อออเดอร์ กรุณาเพิ่มคอลัมน์ก่อน');
+            throw new NotFoundException('ยังไม่มีคอลัมน์ใน Sales Pipeline กรุณาเพิ่มคอลัมน์ก่อน');
         }
         return stages[0].stageKey;
     }
     async assertStageExists(stageKey) {
         const exists = await this.stagesService.exists(stageKey);
         if (!exists) {
-            throw new NotFoundException(`ไม่พบคอลัมน์ "${stageKey}" ในท่อออเดอร์`);
+            throw new NotFoundException(`ไม่พบคอลัมน์ "${stageKey}" ใน Sales Pipeline`);
         }
     }
     async recalcPurchaseCount(customerId, manager) {
@@ -85,9 +107,11 @@ let CustomersService = class CustomersService {
         const rows = await executor.query(`UPDATE customers c
          SET purchase_count = (
            SELECT COUNT(*)::int
-           FROM documents d
-           WHERE d.customer_id = c.customer_id
-             AND d.doc_type = 'receipt'
+           FROM issue_order_attachment a
+           INNER JOIN issue_order o ON o.id = a.issue_order_id
+           INNER JOIN document_type dt ON dt.id = a.document_type_id
+           WHERE o.customer_id = c.customer_id
+             AND dt.document_type = 'receipt'
          )
          WHERE c.customer_id = $1
          RETURNING purchase_count`, [customerId]);
@@ -100,9 +124,11 @@ let CustomersService = class CustomersService {
         await this.customersRepository.query(`UPDATE customers c
        SET purchase_count = (
          SELECT COUNT(*)::int
-         FROM documents d
-         WHERE d.customer_id = c.customer_id
-           AND d.doc_type = 'receipt'
+         FROM issue_order_attachment a
+         INNER JOIN issue_order o ON o.id = a.issue_order_id
+         INNER JOIN document_type dt ON dt.id = a.document_type_id
+         WHERE o.customer_id = c.customer_id
+           AND dt.document_type = 'receipt'
        )
        WHERE c.customer_id = ANY($1::int[])`, [customerIds]);
     }
@@ -121,6 +147,10 @@ let CustomersService = class CustomersService {
     }
     async update(customerId, dto) {
         const customer = await this.findOne(customerId);
+        const isStatusOnlyMove = Object.entries(dto).every(([key, value]) => key === 'status' || value === undefined);
+        if (!isStatusOnlyMove) {
+            await this.agingRulesService.assertNotEditLocked('customers', customer.status);
+        }
         if (dto.status !== undefined) {
             await this.assertStageExists(dto.status);
         }
@@ -130,6 +160,7 @@ let CustomersService = class CustomersService {
     }
     async deactivate(customerId) {
         const customer = await this.findOne(customerId);
+        await this.agingRulesService.assertNotEditLocked('customers', customer.status);
         customer.isActive = false;
         const saved = await this.customersRepository.save(customer);
         return {
@@ -153,7 +184,8 @@ CustomersService = __decorate([
     Injectable(),
     __param(0, InjectRepository(Customer)),
     __metadata("design:paramtypes", [Repository,
-        PipelineStagesService])
+        PipelineStagesService,
+        AgingRulesService])
 ], CustomersService);
 export { CustomersService };
 //# sourceMappingURL=customers.service.js.map

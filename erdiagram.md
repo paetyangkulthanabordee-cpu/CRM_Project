@@ -65,7 +65,7 @@ erDiagram
     product {
         SERIAL id PK
         VARCHAR255 name
-        VARCHAR100 sku_code UK
+        VARCHAR100 sku_code
         INT category_id FK "-> category.id"
         TEXT description
         DECIMAL15_2 price
@@ -95,7 +95,8 @@ erDiagram
         INT user_id FK "ผู้รับผิดชอบ (assignee), nullable"
         DECIMAL15_2 amount
         TEXT note
-        TIMESTAMPTZ last_activity_at "กิจกรรมล่าสุด = จุดเริ่มต้นนับอายุการ์ด (Aging Rules), nullable"
+        BOOLEAN is_archived "true = ถูกซ่อนจากบอร์ด (Archive) — ไม่มีการลบข้อมูล"
+        TIMESTAMPTZ updated_at "กิจกรรมล่าสุด = จุดเริ่มต้นนับอายุการ์ด (Aging Rules)"
     }
 
     issue_order_detail {
@@ -110,7 +111,7 @@ erDiagram
         INT from_stage_id FK "-> order_pipeline.id"
         INT to_stage_id FK "-> order_pipeline.id"
         VARCHAR30 condition_type "attachment | field | document | payment"
-        JSONB condition_config "{minFiles} | {field} | {docType}"
+        JSONB condition_config "{minFiles[,docType]} | {field} | {docType}"
         INT document_type_id FK "-> document_type.id, nullable"
         BOOLEAN is_required "ไม่ผ่านแล้วบล็อกการย้าย"
         BOOLEAN is_active "ปิดอยู่จะไม่ถูกตรวจ"
@@ -136,6 +137,10 @@ erDiagram
         INT warning_after_days "ไม่มี activity ครบกำหนด -> การ์ดสีเหลือง"
         INT critical_after_days "ไม่มี activity ครบกำหนด -> การ์ดสีแดง (ต้อง > warning)"
         BOOLEAN is_active "ปิดอยู่จะไม่นำไปคิดสีการ์ด"
+        VARCHAR20 board_type "order_pipeline / customers = บอร์ดที่มีผล"
+        VARCHAR50 stage_key "คอลัมน์บนบอร์ดboard_type, NULL = ทุกคอลัมน์"
+        VARCHAR20 action_type "none / auto_archive / edit_lock"
+        INT archive_after_days "จำนวนวันที่ซ่อนการ์ด (NULL = ไม่ใช้ action นี้)"
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
@@ -214,9 +219,10 @@ erDiagram
 
 ### `issue_order`
 
-ตารางใบสั่งซื้อ เก็บ id, customer_id (ลูกค้า), order_pipeline_id (ขั้นตอน), user_id (ผู้รับผิดชอบ/assignee), amount (ยอดรวม), note และ `last_activity_at` (เวลาของกิจกรรมล่าสุด)
+ตารางใบสั่งซื้อ เก็บ id, customer_id (ลูกค้า), order_pipeline_id (ขั้นตอน), user_id (ผู้รับผิดชอบ/assignee), amount (ยอดรวม), note และ `updated_at` (เวลาแก้ไขล่าสุด)
 - `user_id` nullable: ข้อมูลเดิมเป็น NULL / ลบ user แล้วค่ากลายเป็น NULL (ON DELETE SET NULL)
-- `last_activity_at` = จุดเริ่มต้นนับอายุการ์ดของ Aging Rules — ถูกอัปเดตเป็นเวลาปัจจุบัน (reset timer) ทุกครั้งที่มีกิจกรรม: ย้ายขั้นตอน / แก้ไขข้อมูล / อัปโหลดไฟล์ (ค่า NULL ให้ fallback ไป `updated_at`)
+- `updated_at` = จุดเริ่มต้นนับอายุการ์ดของ Aging Rules — TypeORM อัปเดตเป็นเวลาปัจจุบัน (reset timer) ทุกครั้งที่มีกิจกรรม: สร้างใบสั่งซื้อ / ย้ายขั้นตอน / แก้ไขข้อมูล / อัปโหลดไฟล์ (คอลัมน์ `last_activity_at` ถูกยกเลิกใน migration 028)
+- `is_archived` = การ์ดถูก **ซ่อน**ออกจาก Order Pipeline โดย Aging Rule (`action_type = 'auto_archive'`, migration 032) — ⚠ **ไม่มีการลบข้อมูล** แถว/รายละเอียด/ไฟล์แนบ/ไฟล์ อยู่ครบและเข้าถึงได้จากหน้าอื่น (เช่น ตารางคำสั่งซื้อในหน้ารายละเอียดลูกค้า ที่ไม่ได้ส่ง `archived`); บอร์ดยิง `GET /api/issue-orders?archived=false` จึงไม่แสดงใบนั้นเลย
 
 ### `issue_order_detail`
 
@@ -226,7 +232,7 @@ erDiagram
 ### `workflow_rules`
 
 ตารางกฎควบคุมการย้ายการ์ดบนบอร์ด Order Pipeline แต่ละ rule กำหนดคู่ From Stage → To Stage, เงื่อนไข (`condition_type` + `condition_config`), บังคับ/ไม่บังคับ (`is_required`) และ เปิด/ปิด (`is_active`)
-- `attachment` = ต้องแนบไฟล์อย่างน้อย `minFiles` ไฟล์ / `field` = ต้องกรอกฟิลด์ที่กำหนด / `document` = ต้องมีไฟล์แนบของใบสั่งซื้อที่ `document_type_id` ตรงกับที่ rule ระบุ / `payment` = ต้องมีใบเสร็จของลูกค้ารายนั้น
+- `attachment` = ต้องแนบไฟล์อย่างน้อย `minFiles` ไฟล์ (rule ที่ระบุ `document_type_id` → นับเฉพาะไฟล์แนบประเภทนั้น / ไม่ระบุ → นับรวมไฟล์ทุกประเภท) / `field` = ต้องกรอกฟิลด์ที่กำหนด / `document` = ต้องมีไฟล์แนบของใบสั่งซื้อที่ `document_type_id` ตรงกับที่ rule ระบุ / `payment` = ต้องมีใบเสร็จของลูกค้ารายนั้น
 - `document_type_id` nullable: ใช้เฉพาะ rule ประเภท `document` (rule อื่นเป็น NULL), ลบ `document_type` แล้วกลายเป็น NULL (ON DELETE SET NULL)
 - `condition_config.docType` (string) เก็บไว้เป็น fallback เท่านั้น — แหล่งความจริงคือคอลัมน์ `document_type_id`
 - เมื่อลบขั้นตอนใน `order_pipeline` rule ของขั้นตอนนั้นจะถูกลบตาม (ON DELETE CASCADE)
@@ -237,7 +243,20 @@ erDiagram
 - `warning_after_days` = จำนวนวันที่เริ่มแสดงสีเหลือง (Warning) / `critical_after_days` = จำนวนวันที่เปลี่ยนเป็นสีแดง (Overdue/Critical)
 - CHECK constraint: `critical_after_days > warning_after_days >= 1`
 - `is_active` = เปิด/ปิด rule รายละใบได้โดยไม่ต้องลบ
-- ไม่มี FK ไปตารางอื่น: บอร์ดฝั่ง frontend ดึง Threshold ผ่าน `GET /api/aging-rules` แล้วคำนวณสถานะจาก `issue_order.last_activity_at` เอง (คำนวณใหม่ทุก ~1 นาที ไม่ต้องกด Refresh)
+- **Scope ของ rule**: `board_type` = บอร์ดที่มีผล (`order_pipeline` = ใบสั่งซื้อ / `customers` = ลูกค้า) และ `stage_key` = เจาะคอลัมน์บนบอร์ดนั้น (`stage_key` เป็น `NULL` = มีผลกับ **ทุกคอลัมน์** ของบอร์ดดังกล่าว)
+  - ไม่ทำ FK เพราะเป็น polymorphic อ้าง 2 ตารางต่าง entity — แต่ฝั่ง backend ตรวจว่า `stage_key` มีอยู่จริงในตารางของ `board_type` ที่เลือกตอนสร้าง/แก้ไข
+  - ใช้ `stage_key` (ไม่ใช่ id) เพราะ unique ทั้ง `order_pipeline` และ `pipeline_stages` และหน้า frontend มีค่านี้อยู่แล้ว (`order.orderPipeline.stageKey` / `customer.status`)
+  - ถ้าคอลัมน์ถูกลบ `stage_key` จะค้าง → rule ไม่ match ใบไหน (หน้า Administration ขึ้นป้าย "ไม่พบคอลัมน์")
+- **การกระทำ (`action_type`)** เลือกได้อย่างเดียวต่อ 1 rule:
+  - `none` = "Color mark" — แค่เปลี่ยนสีการ์ดตามวัน (พฤติกรรมเดิม)
+  - `auto_archive` = **"ซ่อนการ์ด"** ออก Order Pipeline เมื่อ `updated_at` เก่ากว่า **`archive_after_days`** (จำนวนวันที่ Admin กำหนดเอง แยกจาก Warning/Critical) — ทำงานโดย scheduler ฝั่ง backend (`AgingAutoArchiveService`) ทุก 10 นาที + รอบแรก 15 วินาทีหลัง boot (ปรับด้วย env `AUTO_ARCHIVE_INTERVAL_MS`); DB มี CHECK บังคับว่า `action='auto_archive'` ต้องมีค่านี้
+    - **ใช้ได้เฉพาะ `board_type = 'order_pipeline'`** (backend validate ตอนสร้าง/แก้ rule) — เรียก `IssueOrdersService.archive(id)` ซึ่ง **แค่ตั้ง `is_archived = true`**: ไม่ลบแถว ไม่ลบไฟล์ ไม่ตรวจ edit-lock
+    - บอร์ดยิง API ด้วย `archived=false` → ใบนั้น **ไม่ถูกส่งมาแสดงเลย** (server-side filter)
+    - ปลดการซ่อน: `PATCH /api/issue-orders/:id {isArchived: false}` หรือ `UPDATE issue_order SET is_archived = false ...` (ไม่มี UI)
+  - `edit_lock` = ห้ามแก้ไขข้อมูล/อัปโหลด-ลบไฟล์/ลบรายการ เมื่อการ์ดอยู่ในคอลัมน์นี้ (บังคับจริงฝั่ง backend ด้วย `403 errorCode EDIT_LOCKED` ที่ `assertNotEditLocked`) แต่ **ย้ายคอลัมน์ได้เสมอ** (`PATCH /issue-orders/:id/stage` และ `PATCH /customers/:id` ที่มีแค่ `{status}` ไม่ถูกบล็อก) — **ต้องเจาะคอลัมน์** (ฟอร์มซ่อน "ทุกคอลัมน์" และ backend ปฏิเสธ `stage_key = NULL`)
+  - ฟอร์ม Add/Edit: ช่วง `Warning after / Critical after` + แถบ preview **แสดงเฉพาะ `action = none`** — `auto_archive` มีช่อง "Archive หลังจาก (วัน)" ของตัวเอง, `edit_lock` มีเฉพาะตัวเลือกบอร์ด/คอลัมน์
+  - **จำนวนการ์ดในหัวคอลัมน์** นับเฉพาะ `is_archived = false` ให้ตรงกับที่แสดง ส่วนการ "ลบคอลัมน์" ยังนับรวมใบ archive (กัน FK `order_pipeline_id` NOT NULL)
+- ไม่มี FK ไปตารางอื่น: บอร์ดฝั่ง frontend ดึง Threshold ผ่าน `GET /api/aging-rules` แล้วกรองตาม `board_type` + `stage_key` แล้วคำนวณสถานะจาก `issue_order.updated_at` / `customers.updated_at` เอง (คำนวณใหม่ทุก ~1 นาที ไม่ต้องกด Refresh)
 
 ### `issue_order_attachment`
 

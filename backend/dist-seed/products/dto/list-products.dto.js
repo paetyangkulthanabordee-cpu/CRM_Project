@@ -10,7 +10,8 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 import { IsInt, IsOptional, IsString, } from 'class-validator';
 export class ListProductsDto {
     search;
-    groupId;
+    categoryId;
+    productGroupId;
     page;
     limit;
 }
@@ -23,7 +24,12 @@ __decorate([
     IsOptional(),
     IsInt(),
     __metadata("design:type", Number)
-], ListProductsDto.prototype, "groupId", void 0);
+], ListProductsDto.prototype, "categoryId", void 0);
+__decorate([
+    IsOptional(),
+    IsInt(),
+    __metadata("design:type", Number)
+], ListProductsDto.prototype, "productGroupId", void 0);
 __decorate([
     IsOptional(),
     IsInt(),

@@ -1,9 +1,10 @@
 import { UserRole } from '../users/entities/user.entity.js';
-export declare const PERMISSION_KEYS: readonly ["dashboard", "customers", "orderPipeline", "documents", "products", "productManagement", "reports", "administration"];
+export declare const PERMISSION_KEYS: readonly ["dashboard", "customers", "salesPipeline", "orderPipeline", "documents", "products", "productManagement", "reports", "administration"];
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 export interface RolePermissionSet {
     dashboard: boolean;
     customers: boolean;
+    salesPipeline: boolean;
     orderPipeline: boolean;
     documents: boolean;
     products: boolean;

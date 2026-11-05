@@ -17,6 +17,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { CustomersModule } from './customers/customers.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
+import { DocumentTypesModule } from './document-types/document-types.module.js';
 import { QuotationsModule } from './quotations/quotations.module.js';
 import { InvoicesModule } from './invoices/invoices.module.js';
 import { ReceiptsModule } from './receipts/receipts.module.js';
@@ -24,6 +25,11 @@ import { PermissionsModule } from './permissions/permissions.module.js';
 import { AuditLogsModule } from './audit-logs/audit-logs.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { ProductsModule } from './products/products.module.js';
+import { OrderPipelineModule } from './order-pipeline/order-pipeline.module.js';
+import { IssueOrdersModule } from './issue-orders/issue-orders.module.js';
+import { WorkflowRulesModule } from './workflow-rules/workflow-rules.module.js';
+import { AgingRulesModule } from './aging-rules/aging-rules.module.js';
+import { AgingAutoArchiveModule } from './aging-rules/aging-auto-archive.module.js';
 const requiredEnvVars = [
     'DATABASE_HOST',
     'DATABASE_PORT',
@@ -58,6 +64,7 @@ AppModule = __decorate([
             UsersModule,
             CustomersModule,
             DocumentsModule,
+            DocumentTypesModule,
             QuotationsModule,
             InvoicesModule,
             ReceiptsModule,
@@ -66,6 +73,11 @@ AppModule = __decorate([
             AuditLogsModule,
             DashboardModule,
             ProductsModule,
+            OrderPipelineModule,
+            IssueOrdersModule,
+            WorkflowRulesModule,
+            AgingRulesModule,
+            AgingAutoArchiveModule,
         ],
         controllers: [AppController],
         providers: [

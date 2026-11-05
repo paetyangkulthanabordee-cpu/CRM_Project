@@ -10,6 +10,7 @@ import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteIcon from "@mui/icons-material/Delete";
+import LockOutlineIcon from "@mui/icons-material/LockOutlined";
 import DownloadIcon from "@mui/icons-material/Download";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchIcon from "@mui/icons-material/Search";
@@ -45,6 +46,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 
+import AgingBadge from "@/components/AgingBadge";
 import CustomerDetailDialog, {
   formatBaht,
   formatDate,
@@ -57,12 +59,15 @@ import {
   summarizeDocs,
 } from "@/lib/customerDocs";
 import { useApi } from "@/lib/swr";
+import { useAgingStatus } from "@/lib/useAgingStatus";
+import { isColumnLocked, useEditLock } from "@/lib/useEditLock";
 import { useStoredPreference } from "@/lib/useStoredPreference";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
 import { useSession } from "@/lib/useSession";
 
 import type {
+  AgingRule,
   Customer,
   DocumentItem,
   PipelineStage,
@@ -86,6 +91,15 @@ const VIEW_OPTIONS = ["table", "kanban"] as const;
 type CustomerView = (typeof VIEW_OPTIONS)[number];
 
 const VIEW_STORAGE_KEY = "customers-view";
+
+/*
+ * stage_key ของลูกค้า = คอลัมน์บนบอร์ด (customers.status)
+ * ใช้เทียบ rule ที่ scope เป็นคอลัมน์ — ฟังก์ชันระดับ module
+ * (identity คงที่) กัน useMemo ใน useAgingStatus รันซ้ำทุก render
+ */
+const getCustomerStageKey = (
+  customer: Customer,
+): string | null => customer.status ?? null;
 
 /*
  * จำนวนสูงสุดที่บอร์ด Kanban ดึงมาได้
@@ -281,6 +295,42 @@ export default function CustomersPage() {
     [stagesData],
   );
 
+  /*
+   * Aging Rules (Time-based) สำหรับบอร์ดลูกค้า
+   * hook กรองเอาเฉพาะ rule ของบอร์ด customers (board_type = customers)
+   * ส่วน stage_key = เจาะคอลัมน์บนบอร์ดนี้ / null = ทุกคอลัมน์
+   */
+  const { data: agingRulesData } = useApi<AgingRule[]>(
+    ready && user ? "/api/aging-rules" : null,
+  );
+
+  const agingRules = useMemo(
+    () => agingRulesData ?? [],
+    [agingRulesData],
+  );
+
+  const agingMap = useAgingStatus(
+    customers,
+    agingRules,
+    "customers",
+    getCustomerStageKey,
+  );
+
+  /*
+   * edit-lock: คอลัมน์ที่ถูก Aging Rule ล็อกไม่ให้แก้ไข
+   * ใช้ปิดปุ่มแก้ไข/ลบรายแถวบนตาราง
+   * ฝั่ง backend บังคับซ้ำด้วย 403 errorCode EDIT_LOCKED
+   */
+  const isEditLocked = useCallback(
+    (customer: Customer) =>
+      isColumnLocked(
+        agingRules,
+        "customers",
+        customer.status,
+      ),
+    [agingRules],
+  );
+
   const [detailTarget, setDetailTarget] =
     useState<Customer | null>(null);
 
@@ -288,6 +338,17 @@ export default function CustomersPage() {
     useState(false);
   const [editing, setEditing] =
     useState<Customer | null>(null);
+
+  /*
+   * edit-lock ของ "ฟอร์มที่กำลังแก้ไขอยู่"
+   * (สร้างใหม่ = editing เป็น null -> ไม่มีคอลัมน์ -> ไม่ล็อก)
+   */
+  const editLock = useEditLock(
+    "customers",
+    editing?.status ?? null,
+  );
+  const editLocked = editLock.locked;
+
   const [form, setForm] = useState<CustomerForm>({
     ...emptyForm,
     status: stages[0]?.stageKey ?? "",
@@ -402,6 +463,19 @@ export default function CustomersPage() {
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
+
+    /*
+     * edit-lock: คอลัมน์นี้ถูกล็อกไม่ให้แก้ไข
+     * กันการกด Enter ในช่อง (submit ข้ามปุ่มที่ disabled ได้)
+     */
+    if (editLocked) {
+      setFormError(
+        tCommon("editLockedHint", {
+          rule: editLock.ruleName ?? "",
+        }),
+      );
+      return;
+    }
 
     const result = customerSchema.safeParse(form);
 
@@ -1159,21 +1233,42 @@ export default function CustomersPage() {
                           </TableCell>
 
                           <TableCell>
-                            <Chip
-                              size="small"
-                              label={
-                                stage?.label ??
-                                customer.status
-                              }
+                            <Stack
+                              spacing={0.5}
                               sx={{
-                                fontWeight: 700,
-                                borderRadius: "8px",
-                                color: "#ffffff",
-                                bgcolor:
-                                  stage?.color ??
-                                  "#94a3b8",
+                                alignItems:
+                                  "flex-start",
                               }}
-                            />
+                            >
+                              <Chip
+                                size="small"
+                                label={
+                                  stage?.label ??
+                                  customer.status
+                                }
+                                sx={{
+                                  fontWeight: 700,
+                                  borderRadius: "8px",
+                                  color: "#ffffff",
+                                  bgcolor:
+                                    stage?.color ??
+                                    "#94a3b8",
+                                }}
+                              />
+
+                              {/*
+                                  ป้าย "N วันไม่มี Activity" (เหมือนการ์ด Kanban)
+                                  แสดงเฉพาะแถวที่เกิน warning/critical ตาม Aging Rules
+                                  แถวสถานะ normal -> AgingBadge คืน null เอง
+                                */}
+                              <AgingBadge
+                                aging={
+                                  agingMap.get(
+                                    customer.customerId,
+                                  ) ?? null
+                                }
+                              />
+                            </Stack>
                           </TableCell>
 
                           <TableCell align="right">
@@ -1232,6 +1327,7 @@ export default function CustomersPage() {
                               <IconButton
                                 size="small"
                                 aria-label={t("editCustomer")}
+                                disabled={isEditLocked(customer)}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   openEdit(customer);
@@ -1246,6 +1342,7 @@ export default function CustomersPage() {
                               <IconButton
                                 size="small"
                                 aria-label={t("deleteCustomer")}
+                                disabled={isEditLocked(customer)}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setDeleteTarget(
@@ -1391,6 +1488,7 @@ export default function CustomersPage() {
             customers={customers}
             stages={stages}
             docSummary={docSummary}
+            agingMap={agingMap}
             onOpen={setDetailTarget}
             onStageChange={handleMoveCustomer}
             emptyColumnLabel={t("kanbanEmpty")}
@@ -1437,6 +1535,20 @@ export default function CustomersPage() {
                 </Alert>
               )}
 
+              {/* edit-lock: แจ้งว่าคอลัมน์ปัจจุบันถูกล็อก (ชื่อ/อีเมล/โทร ถูกปิด) */}
+              {editLocked && (
+                <Alert
+                  severity="info"
+                  variant="outlined"
+                  icon={<LockOutlineIcon fontSize="inherit" />}
+                  data-testid="edit-locked-alert"
+                >
+                  {tCommon("editLockedHint", {
+                    rule: editLock.ruleName ?? "",
+                  })}
+                </Alert>
+              )}
+
               <TextField
                 fullWidth
                 label={t("companyName")}
@@ -1448,7 +1560,7 @@ export default function CustomersPage() {
                       event.target.value,
                   }))
                 }
-                disabled={saving}
+                disabled={saving || editLocked}
                 required
               />
 
@@ -1463,7 +1575,7 @@ export default function CustomersPage() {
                     email: event.target.value,
                   }))
                 }
-                disabled={saving}
+                disabled={saving || editLocked}
               />
 
               <TextField
@@ -1476,9 +1588,13 @@ export default function CustomersPage() {
                     phone: event.target.value,
                   }))
                 }
-                disabled={saving}
+                disabled={saving || editLocked}
               />
 
+              {/*
+                ช่องคอลัมน์ "ไม่ปิด" แม้ถูกล็อก —
+                การย้ายคอลัมน์ยังทำได้เสมอตามกติกา edit-lock
+              */}
               <TextField
                 fullWidth
                 select
@@ -1516,7 +1632,7 @@ export default function CustomersPage() {
             <Button
               type="submit"
               variant="contained"
-              disabled={saving}
+              disabled={saving || editLocked}
               sx={{ textTransform: "none" }}
             >
               {saving ? (

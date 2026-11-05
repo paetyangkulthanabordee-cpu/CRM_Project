@@ -20,6 +20,7 @@ import { Repository } from 'typeorm';
 import { IssueOrder } from './entities/issue-order.entity.js';
 import { IssueOrderAttachment } from './entities/issue-order-attachment.entity.js';
 import { DocumentType } from '../documents/entities/document-type.entity.js';
+import { AgingRulesService } from '../aging-rules/aging-rules.service.js';
 
 /*
  * ชนิดไฟล์ที่รับอัปโหลดได้ (เอกสาร/รูปภาพที่ใช้ในงานขาย)
@@ -91,6 +92,11 @@ export class IssueOrderAttachmentsService {
     private readonly ordersRepository: Repository<IssueOrder>,
     @InjectRepository(DocumentType)
     private readonly documentTypesRepository: Repository<DocumentType>,
+    /*
+     * edit-lock: ห้ามอัปโหลด/ลบไฟล์เมื่อคอลัมน์ของใบสั่งซื้อ
+     * ถูก Rule ล็อกไม่ให้แก้ไข (ย้ายคอลัมน์ออกได้เสมอ)
+     */
+    private readonly agingRulesService: AgingRulesService,
   ) {
     this.uploadDir =
       process.env.UPLOAD_DIR?.trim() ||
@@ -121,6 +127,7 @@ export class IssueOrderAttachmentsService {
     documentTypeId: number | null = null,
   ): Promise<AttachmentView> {
     await this.assertOrderExists(orderId);
+    await this.assertNotEditLocked(orderId);
 
     if (documentTypeId !== null) {
       await this.assertDocumentTypeExists(
@@ -188,11 +195,12 @@ export class IssueOrderAttachmentsService {
 
       /*
        * อัปโหลดไฟล์ = activity ใหม่ของบอร์ด
-       * -> reset timer ของ Aging Rules (นับ age การ์ดใหม่จากตรงนี้)
+       * -> reset timer ของ Aging Rules (นับ age การ์ดใหม่จาก updated_at)
+       * ระบุค่าตรง ๆ ไม่พึ่ง CURRENT_TIMESTAMP จะได้ชัดว่าตั้งใจอัปเดต
        */
       await this.ordersRepository.update(
         { id: orderId },
-        { lastActivityAt: new Date() },
+        { updatedAt: new Date() },
       );
 
       return this.toView(saved);
@@ -243,6 +251,8 @@ export class IssueOrderAttachmentsService {
       attachmentId,
     );
 
+    await this.assertNotEditLocked(orderId);
+
     removeQuietly(join(this.uploadDir, row.storedName));
 
     await this.attachmentsRepository.remove(row);
@@ -251,6 +261,61 @@ export class IssueOrderAttachmentsService {
       attachmentId,
       deleted: true,
     };
+  }
+
+  /*
+   * ลบไฟล์แนบบนดิสก์ของใบสั่งซื้อ "ทุกไฟล์"
+   * เรียกก่อนลบแถวในตาราง (ตารางจะถูกลบตามด้วย ON DELETE CASCADE)
+   *
+   * ใช้ทั้งตอนลบใบสั่งซื้อด้วยมือ และตอน auto-delete ของ Aging Rule
+   * เพื่อไม่ให้ไฟล์กำพร้ากองสะสมบนดิสก์
+   * ลบไม่ได้ (ไฟล์หายไปแล้ว) = ข้าม ไม่ทำให้การลบใบสั่งซื้อล้มเหลว
+   *
+   * คืนจำนวนไฟล์ที่ลบสำเร็จ
+   */
+  async deleteFilesByOrderId(orderId: number): Promise<number> {
+    const rows = await this.attachmentsRepository.find({
+      where: { issueOrderId: orderId },
+      select: { storedName: true },
+    });
+
+    let removed = 0;
+
+    for (const row of rows) {
+      const filePath = join(this.uploadDir, row.storedName);
+
+      if (existsSync(filePath)) {
+        removeQuietly(filePath);
+        removed += 1;
+      }
+    }
+
+    return removed;
+  }
+
+  /*
+   * edit-lock: ตรวจว่าคอลัมน์ปัจจุบันของใบสั่งซื้อ
+   * ถูก Rule ล็อกไม่ให้แก้ไขหรือไม่ (บล็อกอัปโหลด/ลบไฟล์)
+   * ย้ายคอลัมน์ไม่ผ่านเส้นทางนี้ -> ยังลากออกได้เสมอ
+   */
+  private async assertNotEditLocked(
+    orderId: number,
+  ): Promise<void> {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: { orderPipeline: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException(
+        'ไม่พบใบสั่งซื้อนี้',
+      );
+    }
+
+    await this.agingRulesService.assertNotEditLocked(
+      'order_pipeline',
+      order.orderPipeline?.stageKey ?? null,
+    );
   }
 
   private async findOne(

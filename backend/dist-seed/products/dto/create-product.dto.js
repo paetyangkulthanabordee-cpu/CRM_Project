@@ -11,7 +11,7 @@ import { IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min, } fr
 export class CreateProductDto {
     name;
     skuCode;
-    productGroupId;
+    categoryId;
     description;
     price;
     productUnitId;
@@ -31,7 +31,7 @@ __decorate([
 __decorate([
     IsInt(),
     __metadata("design:type", Number)
-], CreateProductDto.prototype, "productGroupId", void 0);
+], CreateProductDto.prototype, "categoryId", void 0);
 __decorate([
     IsOptional(),
     IsString(),

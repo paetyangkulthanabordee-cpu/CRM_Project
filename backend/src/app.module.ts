@@ -23,6 +23,7 @@ import { OrderPipelineModule } from './order-pipeline/order-pipeline.module.js';
 import { IssueOrdersModule } from './issue-orders/issue-orders.module.js';
 import { WorkflowRulesModule } from './workflow-rules/workflow-rules.module.js';
 import { AgingRulesModule } from './aging-rules/aging-rules.module.js';
+import { AgingAutoArchiveModule } from './aging-rules/aging-auto-archive.module.js';
 
 const requiredEnvVars = [
   'DATABASE_HOST',
@@ -74,6 +75,8 @@ if (missingEnvVars.length > 0) {
     IssueOrdersModule,
     WorkflowRulesModule,
     AgingRulesModule,
+    /* scheduler "ซ่อนการ์ด" อัตโนมัติ (Aging Rule = auto_archive) */
+    AgingAutoArchiveModule,
   ],
 
   controllers: [AppController],

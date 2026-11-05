@@ -85,6 +85,9 @@ export class WorkflowRulesService {
      * เงื่อนไข document: resolve ประเภทเอกสารจากคอลัมน์ FK ก่อน
      * (ลำดับ: dto.documentTypeId ที่ส่งมา -> config.docType string เดิม)
      * แล้ว sync ชื่อกลับเข้า config เพื่อให้ fallback ตรงกันเสมอ
+     *
+     * เงื่อนไข attachment: ระบุประเภทได้ (นับเฉพาะไฟล์ประเภทนั้น)
+     *   ไม่ระบุ -> คืน null = rule นับรวมไฟล์ทุกประเภท (แบบเดิม)
      */
     const documentType =
       dto.conditionType === 'document'
@@ -92,13 +95,19 @@ export class WorkflowRulesService {
             dto.documentTypeId,
             dto.conditionConfig,
           )
-        : null;
+        : dto.conditionType === 'attachment'
+          ? await this.resolveDocumentType(
+              dto.documentTypeId,
+              dto.conditionConfig,
+              { optional: true },
+            )
+          : null;
 
     const config = this.normalizeConfig(
       dto.conditionType,
       documentType
         ? {
-            ...(dto.conditionConfig ?? {}),
+            ...dto.conditionConfig,
             docType: documentType.documentType,
           }
         : dto.conditionConfig,
@@ -142,22 +151,54 @@ export class WorkflowRulesService {
     const nextTo = dto.toStageId ?? rule.toStageId;
 
     /*
-     * หาประเภทเอกสารของเงื่อนไข document รอบถัดไป
-     * - เปลี่ยนออกจาก document -> ล้างค่า (NULL)
+     * หาประเภทเอกสารของเงื่อนไข document/attachment รอบถัดไป
+     * - เปลี่ยนออกจาก document/attachment -> ล้างค่า (NULL)
      * - คง type/document ไว้ -> ใช้ค่าใหม่ถ้าส่งมา มิฉะนั้นคงค่าเดิม
      * - ย้ายเข้า document โดยไม่ระบุประเภท -> resolveDocumentType จะ throw 400
+     * - ย้ายเข้า attachment โดยไม่ระบุประเภท -> คืน null (นับรวมไฟล์ทุกประเภท)
      */
+    const keepsConditionUntouched =
+      dto.conditionType === undefined &&
+      dto.conditionConfig === undefined;
+
+    /*
+     * attachment: dto ไม่ได้ระบุประเภทใหม่มาเลย
+     * (ไม่ส่ง documentTypeId / ไม่แตะ conditionType / config ที่ส่งมาไม่มี docType)
+     * -> คงประเภทเดิมไว้ (กันการอัปเดต config อย่างเดียวผ่าน API
+     *    ไปล้างประเภทของ rule ทิ้งเงียบ ๆ)
+     * ส่ง conditionType มาพร้อม config ที่ไม่มี docType
+     * = ตั้งใจล้าง -> ให้ resolve แล้วคืน null (นับรวมทุกประเภท)
+     */
+    const keepsExistingType =
+      dto.documentTypeId === undefined &&
+      dto.conditionType === undefined &&
+      this.readConfigString(
+        dto.conditionConfig,
+        'docType',
+      ) === '';
+
     const documentType =
       nextConditionType === 'document'
         ? await this.resolveDocumentType(
             dto.documentTypeId ??
-              (dto.conditionType === undefined &&
-              dto.conditionConfig === undefined
+              (keepsConditionUntouched
                 ? rule.documentTypeId ?? undefined
                 : undefined),
             dto.conditionConfig ?? rule.conditionConfig,
           )
-        : null;
+        : nextConditionType === 'attachment'
+          ? await this.resolveDocumentType(
+              dto.documentTypeId ??
+                (keepsExistingType
+                  ? rule.documentTypeId ?? undefined
+                  : undefined),
+              keepsExistingType
+                ? rule.conditionConfig
+                : (dto.conditionConfig ??
+                  rule.conditionConfig),
+              { optional: true },
+            )
+          : null;
 
     const nextConfigBase =
       dto.conditionType !== undefined ||
@@ -381,16 +422,33 @@ export class WorkflowRulesService {
           rule.conditionConfig ?? {},
         );
 
+        /*
+         * rule ที่ระบุประเภทเอกสาร -> นับเฉพาะไฟล์แนบ
+         * ประเภทนั้นของใบสั่งซื้อ (หน้ารายละเอียดแยกช่องแนบ
+         * ตามประเภท ผู้ใช้อัปโหลดเข้าช่องที่ตรง rule)
+         * rule ไม่ระบุประเภท (คอลัมน์ FK = NULL) ->
+         * นับรวมไฟล์ทุกประเภทเหมือนพฤติกรรมเดิม
+         */
+        const documentTypeId =
+          await this.resolveEffectiveDocumentTypeId(rule);
+        const label = this.resolveDocumentTypeLabel(rule);
+
         const currentCount =
           await this.attachmentsRepository.count({
-            where: { issueOrderId: order.id },
+            where:
+              documentTypeId !== null
+                ? {
+                    issueOrderId: order.id,
+                    documentTypeId,
+                  }
+                : { issueOrderId: order.id },
           });
 
         return {
           ...base,
           met: currentCount >= minFiles,
-          documentTypeId: null,
-          documentTypeLabel: null,
+          documentTypeId,
+          documentTypeLabel: label,
           currentCount,
           requiredCount: minFiles,
         };
@@ -554,8 +612,17 @@ export class WorkflowRulesService {
     switch (rule.conditionType) {
       case 'attachment': {
         const minFiles = this.readMinFiles(config);
+        const label = this.resolveDocumentTypeLabel(rule);
 
-        return `${name} ต้องแนบไฟล์อย่างน้อย ${minFiles} ไฟล์ (อัปโหลดไฟล์ที่ใบสั่งซื้อก่อน)`;
+        /*
+         * rule ที่ระบุประเภท -> บอกประเภทให้ชัด
+         * (หน้ารายละเอียดแยกช่องแนบตามประเภทเอกสาร)
+         */
+        if (!label) {
+          return `${name} ต้องแนบไฟล์อย่างน้อย ${minFiles} ไฟล์ (อัปโหลดไฟล์ที่ใบสั่งซื้อก่อน)`;
+        }
+
+        return `${name} ต้องแนบไฟล์ประเภท ${label} อย่างน้อย ${minFiles} ไฟล์ (อัปโหลดไฟล์ที่ใบสั่งซื้อก่อน)`;
       }
 
       case 'field': {
@@ -621,7 +688,21 @@ export class WorkflowRulesService {
           );
         }
 
-        return { minFiles };
+        /*
+         * docType = ประเภทเอกสารที่ rule นี้นับเฉพาะ (ถ้ามี)
+         * เก็บคู่กับคอลัมน์ FK ให้ fallback ของ
+         * resolveEffectiveDocumentTypeId ตรงกันเสมอ
+         * (แบบเดียวกับเงื่อนไข 'document')
+         * ไม่ระบุประเภท -> คืน { minFiles } อย่างเดิม = นับรวมทุกประเภท
+         */
+        const docType = this.readConfigString(
+          raw,
+          'docType',
+        );
+
+        return docType
+          ? { minFiles, docType }
+          : { minFiles };
       }
 
       case 'field': {
@@ -685,15 +766,22 @@ export class WorkflowRulesService {
   }
 
   /*
-   * หาแถว document_type ของเงื่อนไข "document"
+   * หาแถว document_type ของเงื่อนไข "document"/"attachment"
    * ลำดับ: ค่า FK ที่ส่งมาตรง ๆ -> resolve จาก config.docType (string เดิม)
    * คืน entity เพื่อให้ caller sync ชื่อกลับเข้า config.docType ได้เสมอ
    * ไม่พบ -> throw 400 (ไม่ใช้ 404 เพราะเป็น input ของ rule ไม่ใช่ทรัพยากรแยก)
+   *
+   * options.optional = true ใช้กับเงื่อนไข "attachment" ที่ระบุประเภทได้เฉพาะเจาะจง:
+   * - ไม่ระบุประเภทใดเลย -> คืน null (rule นับรวมไฟล์ทุกประเภท)
+   * - config.docType ชี้แถวที่ถูกลบไปแล้ว -> คืน null (แทนที่จะบล็อกการแก้ไข)
+   * แต่ถ้าส่ง id มาตรง ๆ แล้วหาไม่เจอ ยัง throw 400 เหมือนเดิม
+   * (ผู้ส่งระบุชัดเจนว่าต้องการประเภทนี้ — ควรได้รับแจ้งว่าไม่มีอยู่จริง)
    */
   private async resolveDocumentType(
     explicitId: number | undefined,
     config: Record<string, unknown> | undefined,
-  ): Promise<DocumentType> {
+    options: { optional?: boolean } = {},
+  ): Promise<DocumentType | null> {
     if (explicitId !== undefined) {
       const found =
         await this.documentTypesRepository.findOne({
@@ -715,6 +803,10 @@ export class WorkflowRulesService {
     );
 
     if (!docType) {
+      if (options.optional) {
+        return null;
+      }
+
       throw new BadRequestException(
         'กรุณาเลือกประเภทเอกสารที่ต้องมีก่อนย้ายขั้นตอน',
       );
@@ -726,6 +818,10 @@ export class WorkflowRulesService {
       });
 
     if (!found) {
+      if (options.optional) {
+        return null;
+      }
+
       throw new BadRequestException(
         `ไม่พบประเภทเอกสาร "${docType}" ในระบบ`,
       );

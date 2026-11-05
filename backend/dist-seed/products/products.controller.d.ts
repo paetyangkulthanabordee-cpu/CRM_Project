@@ -1,9 +1,10 @@
 import { ProductsService } from './products.service.js';
 import { CreateProductDto } from './dto/create-product.dto.js';
+import { ListCatalogDto } from './dto/list-catalog.dto.js';
 import { ListProductsDto } from './dto/list-products.dto.js';
 import { UpdateProductDto } from './dto/update-product.dto.js';
-import { CreateProductGroupDto } from './dto/product-group.dto.js';
-import { UpdateProductGroupDto } from './dto/product-group.dto.js';
+import { CreateCategoryDto } from './dto/category.dto.js';
+import { UpdateCategoryDto } from './dto/category.dto.js';
 import { CreateProductUnitDto } from './dto/product-unit.dto.js';
 import { UpdateProductUnitDto } from './dto/product-unit.dto.js';
 export declare class ProductsController {
@@ -21,13 +22,18 @@ export declare class ProductsController {
         page: number;
         limit: number;
     }>;
-    findAllGroups(): Promise<{
+    findAllGroups(query: ListCatalogDto): Promise<{
         id: number;
         name: string;
         description: string | null;
+        productGroupId: number | null;
+        productGroup: {
+            id: number;
+            name: string;
+        } | null;
         productCount: number;
     }[]>;
-    findAllUnits(): Promise<{
+    findAllUnits(query: ListCatalogDto): Promise<{
         id: number;
         name: string;
         productCount: number;
@@ -39,8 +45,8 @@ export declare class ProductsController {
         id: number;
         deleted: boolean;
     }>;
-    createGroup(dto: CreateProductGroupDto): Promise<import("./entities/product-group.entity.js").ProductGroup>;
-    updateGroup(id: number, dto: UpdateProductGroupDto): Promise<import("./entities/product-group.entity.js").ProductGroup>;
+    createGroup(dto: CreateCategoryDto): Promise<import("./entities/category.entity.js").Category>;
+    updateGroup(id: number, dto: UpdateCategoryDto): Promise<import("./entities/category.entity.js").Category>;
     removeGroup(id: number): Promise<{
         id: number;
         deleted: boolean;

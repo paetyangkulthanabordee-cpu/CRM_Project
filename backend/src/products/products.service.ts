@@ -150,7 +150,6 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto) {
-    await this.assertSkuCodeAvailable(dto.skuCode);
     await this.assertCategoryExists(dto.categoryId);
     await this.assertUnitExists(dto.productUnitId);
 
@@ -169,13 +168,6 @@ export class ProductsService {
 
   async update(id: number, dto: UpdateProductDto) {
     const product = await this.findOne(id);
-
-    if (
-      dto.skuCode !== undefined &&
-      dto.skuCode !== product.skuCode
-    ) {
-      await this.assertSkuCodeAvailable(dto.skuCode, id);
-    }
 
     if (dto.categoryId !== undefined) {
       await this.assertCategoryExists(dto.categoryId);
@@ -202,45 +194,6 @@ export class ProductsService {
     await this.productsRepository.remove(product);
 
     return { id, deleted: true };
-  }
-
-  private normalizeSkuCode(
-    skuCode?: string | null,
-  ): string | null {
-    const trimmed = (skuCode ?? '').trim();
-
-    return trimmed === '' ? null : trimmed;
-  }
-
-  private async assertSkuCodeAvailable(
-    skuCode?: string | null,
-    ignoreId?: number,
-  ) {
-    const normalized = this.normalizeSkuCode(skuCode);
-
-    if (!normalized) {
-      return;
-    }
-
-    const query = this.productsRepository
-      .createQueryBuilder('product')
-      .where('product.sku_code = :skuCode', {
-        skuCode: normalized,
-      });
-
-    if (ignoreId !== undefined) {
-      query.andWhere('product.id != :id', {
-        id: ignoreId,
-      });
-    }
-
-    const clash = await query.getOne();
-
-    if (clash) {
-      throw new ConflictException(
-        `รหัสสินค้า (SKU Code) "${normalized}" ถูกใช้ไปแล้ว`,
-      );
-    }
   }
 
   private async assertCategoryExists(

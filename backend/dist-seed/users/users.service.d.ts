@@ -1,6 +1,7 @@
 import { Repository } from 'typeorm';
 import { Customer } from '../customers/entities/customer.entity.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
+import { ListUsersDto } from './dto/list-users.dto.js';
 import { UpdateUserDto } from './dto/update-user.dto.js';
 import { User } from './entities/user.entity.js';
 export interface UserListItem {
@@ -17,7 +18,7 @@ export declare class UsersService {
     constructor(usersRepository: Repository<User>, customersRepository: Repository<Customer>);
     findByEmail(email: string): Promise<User | null>;
     verifyPassword(plain: string, hash: string): Promise<boolean>;
-    findAll(): Promise<UserListItem[]>;
+    findAll(query?: ListUsersDto): Promise<UserListItem[]>;
     create(dto: CreateUserDto): Promise<{
         userId: number;
         name: string;

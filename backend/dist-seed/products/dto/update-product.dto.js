@@ -11,7 +11,7 @@ import { IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, Min, } fr
 export class UpdateProductDto {
     name;
     skuCode;
-    productGroupId;
+    categoryId;
     description;
     price;
     productUnitId;
@@ -33,7 +33,7 @@ __decorate([
     IsOptional(),
     IsInt(),
     __metadata("design:type", Number)
-], UpdateProductDto.prototype, "productGroupId", void 0);
+], UpdateProductDto.prototype, "categoryId", void 0);
 __decorate([
     IsOptional(),
     IsString(),

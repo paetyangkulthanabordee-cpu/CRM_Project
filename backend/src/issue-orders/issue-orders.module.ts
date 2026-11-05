@@ -19,9 +19,15 @@ import { IssueOrdersController } from './issue-orders.controller.js';
 import { IssueOrdersService } from './issue-orders.service.js';
 import { IssueOrderAttachmentsController } from './issue-order-attachments.controller.js';
 import { IssueOrderAttachmentsService } from './issue-order-attachments.service.js';
+import { AgingRulesModule } from '../aging-rules/aging-rules.module.js';
 
 @Module({
   imports: [
+    /*
+     * AgingRulesService.assertNotEditLocked —
+     * ตรวจ Rule ที่ล็อกไม่ให้แก้ไขข้อมูล/ไฟล์ในคอลัมน์นั้น
+     */
+    AgingRulesModule,
     TypeOrmModule.forFeature([
       IssueOrder,
       IssueOrderDetail,
@@ -41,6 +47,6 @@ import { IssueOrderAttachmentsService } from './issue-order-attachments.service.
     IssueOrdersService,
     IssueOrderAttachmentsService,
   ],
-  exports: [IssueOrdersService],
+  exports: [IssueOrdersService, IssueOrderAttachmentsService],
 })
 export class IssueOrdersModule {}

@@ -12,9 +12,11 @@ import { Product } from '../products/entities/product.entity.js';
 import { OrderPipeline } from '../order-pipeline/entities/order-pipeline.entity.js';
 import { User } from '../users/entities/user.entity.js';
 import { WorkflowRulesService } from '../workflow-rules/workflow-rules.service.js';
+import { AgingRulesService } from '../aging-rules/aging-rules.service.js';
 
 import { IssueOrder } from './entities/issue-order.entity.js';
 import { IssueOrderDetail } from './entities/issue-order-detail.entity.js';
+import { IssueOrderAttachmentsService } from './issue-order-attachments.service.js';
 
 import type {
   CreateIssueOrderDto,
@@ -40,6 +42,12 @@ export class IssueOrdersService {
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly workflowRulesService: WorkflowRulesService,
+    /*
+     * edit-lock: ตรวจ Rule ที่ล็อกไม่ให้แก้ไขคอลัมน์นั้น ๆ
+     * และลบไฟล์แนบบนดิสก์พร้อมกันตอนลบใบสั่งซื้อ
+     */
+    private readonly agingRulesService: AgingRulesService,
+    private readonly attachmentsService: IssueOrderAttachmentsService,
   ) {}
 
   async findAll(
@@ -97,6 +105,19 @@ export class IssueOrdersService {
       );
     }
 
+    /*
+     * ซ่อนใบที่ถูก Archive (auto_archive)
+     * - ไม่ส่งพาราม -> ทุกใบ (หน้ารายละเอียดลูกค้ายังเห็นครบ)
+     * - archived=false -> เฉพาะที่ยังอยู่บนบอร์ด
+     *      (หน้า Order Pipeline ส่งค่านี้ -> ไม่ดึงการ์ดที่ถูกซ่อนมาแสดงเลย)
+     * - archived=true -> เฉพาะที่ถูกซ่อน
+     */
+    if (query.archived === 'false') {
+      builder.andWhere('o.is_archived = false');
+    } else if (query.archived === 'true') {
+      builder.andWhere('o.is_archived = true');
+    }
+
     return builder.getMany();
   }
 
@@ -122,6 +143,44 @@ export class IssueOrdersService {
     }
 
     return order;
+  }
+
+  /*
+   * ใบสั่งซื้อที่ "ไม่มีกิจกรรมครบ archive_after_days"
+   * ในคอลัมน์ของ rule (stageKey = null -> ทุกคอลัมน์ของบอร์ด)
+   *
+   * ใช้โดย scheduler auto-archive ของ Aging Rule
+   * - ตัดใบที่ถูกซ่อนไปแล้วออก (is_archived = false เท่านั้น)
+   *   เพื่อไม่ย้ายซ้ำทุกรอบ
+   * - คืนเฉพาะ id เพื่อลดข้อมูลที่ต้องโหลด
+   */
+  async findArchiveCandidateIds(
+    archiveAfterDays: number,
+    stageKey: string | null,
+  ): Promise<number[]> {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const cutoff = new Date(
+      Date.now() - archiveAfterDays * DAY_MS,
+    );
+
+    const builder = this.ordersRepository
+      .createQueryBuilder('o')
+      .innerJoin('o.orderPipeline', 'p')
+      .select('o.id', 'id')
+      .where('o.updated_at <= :cutoff', { cutoff })
+      .andWhere('o.is_archived = false');
+
+    if (stageKey !== null) {
+      builder.andWhere('p.stage_key = :stageKey', {
+        stageKey,
+      });
+    }
+
+    const rows = await builder.getRawMany<{
+      id: string;
+    }>();
+
+    return rows.map((row) => Number(row.id));
   }
 
   async create(dto: CreateIssueOrderDto) {
@@ -162,10 +221,9 @@ export class IssueOrdersService {
               vatPercent,
               note: dto.note ?? null,
               /*
-               * จุดเริ่มต้นนับเวลา Aging Rules
-               * (DB มี DEFAULT now() อยู่แล้ว แต่เซ็ตตรง ๆ ให้ชัดเจน)
+               * จุดเริ่มต้นนับอายุการ์ดของ Aging Rules = updated_at
+               * (DB มี DEFAULT now() อยู่แล้ว จึงไม่ต้องเซ็ตเอง)
                */
-              lastActivityAt: new Date(),
             }),
           );
 
@@ -202,7 +260,16 @@ export class IssueOrdersService {
      * เพราะ entity ที่มี relation ฝังอยู่จะถูก TypeORM ใช้ทับค่า FK
      * ตอน save ทำให้บันทึกแล้วค่าไม่เปลี่ยน
      */
-    await this.findOne(id);
+    const existing = await this.findOne(id);
+
+    /*
+     * edit-lock: คอลัมน์ปัจจุบันของใบสั่งซื้อถูกล็อกไม่ให้แก้ไข
+     * -> ห้ามแก้ข้อมูล (การย้ายขั้นตอนใช้ /stage แยก จึงลากออกได้เสมอ)
+     */
+    await this.agingRulesService.assertNotEditLocked(
+      'order_pipeline',
+      existing.orderPipeline?.stageKey ?? null,
+    );
 
     if (dto.customerId !== undefined) {
       await this.assertCustomerExists(
@@ -270,6 +337,15 @@ export class IssueOrdersService {
     }
 
     /*
+     * ตั้ง/ปลดสถานะ Archive (ซ่อนออกจากบอร์ด)
+     * ใช้ตอนปลดการซ่อนกลับขึ้นบอร์ดจากฝั่ง UI อื่น
+     * ⚠ ไม่เกี่ยวกับการลบ — ข้อมูลใบสั่งซื้ออยู่ครบเสมอ
+     */
+    if (dto.isArchived !== undefined) {
+      order.isArchived = dto.isArchived;
+    }
+
+    /*
      * ถ้าส่งรายละเอียดสินค้าใหม่ ให้แทนที่ของเดิมทั้งหมด
      * และคำนวณยอดรวมใหม่จากรายการล่าสุด
      */
@@ -329,10 +405,9 @@ export class IssueOrdersService {
 
     /*
      * การแก้ไขข้อมูล = activity ใหม่ของบอร์ด
-     * -> reset timer ของ Aging Rules ให้นับใหม่จากตรงนี้
+     * -> save() จะอัปเดต updated_at ให้เอง
+     *    ซึ่งเป็นจุดเริ่มต้นนับอายุของ Aging Rules (reset timer)
      */
-    order.lastActivityAt = new Date();
-
     await this.ordersRepository.save(order);
 
     return this.findOne(id);
@@ -375,18 +450,64 @@ export class IssueOrdersService {
 
     /*
      * การย้ายขั้นตอนเป็น activity ใหม่ -> reset timer ของ Aging Rules
-     * (การ์ดเริ่มนับ age ใหม่จากวินาทีที่ถูกลากไปขั้นตอนถัดไป)
+     * (การ์ดเริ่มนับ age ใหม่จากวินาทีที่ถูกลากไปขั้นตอนถัดไป
+     *  ผ่าน updated_at ที่ save() อัปเดตให้)
      */
-    order.lastActivityAt = new Date();
-
     await this.ordersRepository.save(order);
 
     return this.findOne(id);
   }
 
+  /*
+   * "ซ่อนการ์ด" ออก Order Pipeline (Soft Archive ของ Aging Rule)
+   *
+   * - แค่ตั้ง is_archived = true — ⚠ ไม่มีการลบข้อมูลใด ๆ:
+   *   แถว issue_order / issue_order_detail / issue_order_attachment
+   *   และไฟล์บนดิสก์ อยู่ครบและเข้าถึงได้จากหน้าอื่นตามเดิม
+   * - หน้า Order Pipeline ยิง API ด้วย archived=false
+   *   จึงไม่ดึงใบนี้มาแสดงเลย
+   * - ไม่ตรวจ edit-lock: การซ่อนเป็นพฤติกรรมของ Aging Rule
+   *   (ต่างจากการแก้ไข/ลบด้วยมือ)
+   * - save/update จะ bump updated_at ให้เอง -> ปลดซ่อนแล้วอายุเริ่มใหม่
+   *
+   * ปลดการซ่อน: PATCH /api/issue-orders/:id { isArchived: false }
+   */
+  async archive(id: number) {
+    // เช็คว่ามีใบสั่งซื้อก่อน (findOne จะ throw 404 ถ้าไม่พบ)
+    await this.findOne(id);
+
+    await this.ordersRepository.update(
+      { id },
+      { isArchived: true },
+    );
+
+    return {
+      id,
+      archived: true,
+    };
+  }
+
+  /*
+   * ลบใบสั่งซื้อ "ด้วยมือ" (ผู้ใช้กดลบเอง)
+   * - ยังเช็ค edit-lock (คอลัมน์ล็อก -> ลบไม่ได้)
+   * - ต่างจาก auto-archive ที่แค่ซ่อน ไม่ลบ
+   */
   async remove(id: number) {
     // เช็คว่ามีใบสั่งซื้อก่อนลบ (findOne จะ throw 404 ถ้าไม่พบ)
-    await this.findOne(id);
+    const order = await this.findOne(id);
+
+    await this.agingRulesService.assertNotEditLocked(
+      'order_pipeline',
+      order.orderPipeline?.stageKey ?? null,
+    );
+
+    /*
+     * ลบไฟล์แนบบนดิสก์ก่อนลบแถว
+     * (issue_order_attachment มี ON DELETE CASCADE ลบแถวให้เอง)
+     * กันไฟล์กำพร้าสะสม — เฉพาะการ "ลบด้วยมือ" เท่านั้น
+     * (auto-archive ไม่แตะไฟล์/แถวใด ๆ)
+     */
+    await this.attachmentsService.deleteFilesByOrderId(id);
 
     /*
      * issue_order_detail มี ON DELETE CASCADE

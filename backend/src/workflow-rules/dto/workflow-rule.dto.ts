@@ -43,6 +43,7 @@ export class CreateWorkflowRuleDto {
 
   /*
    * ประเภทเอกสารของเงื่อนไข "document" (FK -> document_type.id)
+   * ของเงื่อนไข "attachment" = ประเภทที่ rule นี้นับเฉพาะ (ไม่บังคับ)
    * ไม่ส่งก็ได้ — service จะ resolve จาก conditionConfig.docType ให้เอง
    */
   @IsOptional()
@@ -86,7 +87,8 @@ export class UpdateWorkflowRuleDto {
   conditionConfig?: Record<string, unknown>;
 
   /*
-   * ประเภทเอกสารของเงื่อนไข "document" (FK -> document_type.id)
+   * ประเภทเอกสารของเงื่อนไข "document"/"attachment"
+   * (FK -> document_type.id)
    */
   @IsOptional()
   @IsInt()
@@ -120,7 +122,8 @@ export interface WorkflowRuleView {
   conditionType: string;
   conditionConfig: Record<string, unknown>;
   /*
-   * ประเภทเอกสารของเงื่อนไข document (null = ไม่ใช่ rule ประเภทนี้
+   * ประเภทเอกสารของ rule (document = บังคับมีไฟล์ประเภทนี้,
+   * attachment = นับเฉพาะประเภทนี้ / null = ไม่ระบุประเภท
    * หรือ document_type ถูกลบไปแล้ว)
    */
   documentTypeId: number | null;

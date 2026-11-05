@@ -1,45 +1,33 @@
-import { Repository } from 'typeorm';
-import { CustomersService } from '../customers/customers.service.js';
-import { Customer } from '../customers/entities/customer.entity.js';
-import { CreateDocumentDto } from './dto/create-document.dto.js';
-import { ListDocumentsDto } from './dto/list-documents.dto.js';
-import { UpdateDocumentDto } from './dto/update-document.dto.js';
-import { DocumentRecord } from './entities/document.entity.js';
+import type { CreateDocumentDto } from './dto/create-document.dto.js';
+import type { ListDocumentsDto } from './dto/list-documents.dto.js';
+import type { UpdateDocumentDto } from './dto/update-document.dto.js';
 export declare class DocumentsService {
-    private readonly documentsRepository;
-    private readonly customersRepository;
-    private readonly customersService;
-    constructor(documentsRepository: Repository<DocumentRecord>, customersRepository: Repository<Customer>, customersService: CustomersService);
     findAll(query: ListDocumentsDto): Promise<{
-        data: (DocumentRecord & {
-            customerName: any;
-            creatorName: any;
-        })[];
+        data: never[];
         total: number;
         page: number;
         limit: number;
     }>;
-    findOne(docId: number): Promise<DocumentRecord & {
-        customerName: any;
-        creatorName: any;
+    findOne(_docId: number): Promise<void>;
+    stats(): Promise<{
+        quotation: {
+            count: number;
+            total: number;
+        };
+        invoice: {
+            count: number;
+            total: number;
+        };
+        receipt: {
+            count: number;
+            total: number;
+        };
+        purchase_order: {
+            count: number;
+            total: number;
+        };
     }>;
-    stats(): Promise<Record<string, {
-        count: number;
-        total: number;
-    }>>;
-    create(dto: CreateDocumentDto, userId: number): Promise<DocumentRecord & {
-        customerName: any;
-        creatorName: any;
-    }>;
-    update(docId: number, dto: UpdateDocumentDto): Promise<DocumentRecord & {
-        customerName: any;
-        creatorName: any;
-    }>;
-    remove(docId: number): Promise<{
-        docId: number;
-        deleted: boolean;
-    }>;
-    private assertCustomer;
-    private resolveRef;
-    private nextDocNo;
+    create(_dto: CreateDocumentDto, _userId: number): Promise<void>;
+    update(_docId: number, _dto: UpdateDocumentDto): Promise<void>;
+    remove(_docId: number): Promise<void>;
 }

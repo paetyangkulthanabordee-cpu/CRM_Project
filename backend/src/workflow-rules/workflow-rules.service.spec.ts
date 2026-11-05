@@ -10,6 +10,11 @@ import { OrderPipeline } from '../order-pipeline/entities/order-pipeline.entity.
 import { WorkflowRulesService } from './workflow-rules.service.js';
 import { WorkflowRule } from './entities/workflow-rule.entity.js';
 
+import type {
+  CreateWorkflowRuleDto,
+  UpdateWorkflowRuleDto,
+} from './dto/workflow-rule.dto.js';
+
 /*
  * ครอบคลุมจุดที่หน้าบอร์ดพึ่งพา:
  * - assertMoveAllowed ต้อง throw 400 ที่มี errorCode + unmetRules
@@ -255,6 +260,83 @@ describe('WorkflowRulesService', () => {
       );
     });
 
+    /*
+     * rule ชนิด attachment ที่ระบุประเภท -> นับเฉพาะไฟล์
+     * ประเภทนั้น (หน้ารายละเอียดแยกช่องแนบตามประเภทเอกสาร)
+     */
+    it('counts only the matching document type for typed attachment rules', async () => {
+      mockRulesRepository.find.mockResolvedValue([
+        {
+          id: 11,
+          ruleName: 'ต้องแนบใบเสนอราคา ก่อนย้ายขั้น',
+          fromStageId: 1,
+          toStageId: 2,
+          conditionType: 'attachment',
+          conditionConfig: {
+            minFiles: 1,
+            docType: 'quotation',
+          },
+          documentTypeId: 3,
+          isActive: true,
+          isRequired: true,
+        },
+      ]);
+      mockAttachmentsRepository.count.mockResolvedValue(0);
+
+      const result = await service.checkMove(9, 2);
+
+      expect(mockAttachmentsRepository.count).toHaveBeenCalledWith(
+        {
+          where: {
+            issueOrderId: 9,
+            documentTypeId: 3,
+          },
+        },
+      );
+
+      expect(result.allowed).toBe(false);
+      expect(result.rules[0]).toMatchObject({
+        conditionType: 'attachment',
+        met: false,
+        documentTypeId: 3,
+        documentTypeLabel: 'ใบเสนอราคา',
+        currentCount: 0,
+        requiredCount: 1,
+      });
+      expect(result.rules[0].requirementText).toContain(
+        'ประเภท ใบเสนอราคา',
+      );
+    });
+
+    /*
+     * rule ชนิด attachment ที่ไม่ระบุประเภท (documentTypeId = NULL)
+     * -> คงพฤติกรรมเดิม: นับรวมไฟล์ทุกประเภท
+     */
+    it('counts every attachment when the rule has no document type', async () => {
+      mockRulesRepository.find.mockResolvedValue([
+        attachmentRule,
+      ]);
+      mockAttachmentsRepository.count.mockResolvedValue(2);
+
+      const result = await service.checkMove(9, 2);
+
+      expect(mockAttachmentsRepository.count).toHaveBeenCalledWith(
+        {
+          where: { issueOrderId: 9 },
+        },
+      );
+
+      expect(result.allowed).toBe(true);
+      expect(result.rules[0]).toMatchObject({
+        conditionType: 'attachment',
+        met: true,
+        documentTypeId: null,
+        documentTypeLabel: null,
+        currentCount: 2,
+        requiredCount: 2,
+      });
+    });
+
     it('reports allowed once the matching file is attached', async () => {
       mockRulesRepository.find.mockResolvedValue([
         documentRule,
@@ -304,6 +386,153 @@ describe('WorkflowRulesService', () => {
         rules: [],
       });
       expect(mockRulesRepository.find).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+   * rule ชนิด attachment ระบุประเภทได้ -> เก็บทั้งคอลัมน์ FK
+   * และ sync ชื่อกลับเข้า config.docType (แบบเดียวกับ 'document')
+   * ไม่ระบุประเภท -> documentTypeId = NULL = นับรวมไฟล์ทุกประเภท
+   */
+  describe('create', () => {
+    beforeEach(() => {
+      mockStagesRepository.find.mockResolvedValue([
+        { id: 1 },
+        { id: 2 },
+      ]);
+      mockRulesRepository.save.mockImplementation(
+        (payload: unknown) => payload,
+      );
+      mockRulesRepository.findOne.mockResolvedValue({
+        id: 21,
+        ruleName: 'rule',
+        fromStageId: 1,
+        toStageId: 2,
+        conditionType: 'attachment',
+        conditionConfig: { minFiles: 1 },
+        documentTypeId: null,
+        isRequired: true,
+        isActive: true,
+      });
+    });
+
+    it('stores the document type of a typed attachment rule', async () => {
+      mockDocumentTypesRepository.findOne.mockResolvedValue({
+        id: 3,
+        documentType: 'quotation',
+      });
+
+      await service.create({
+        ruleName: ' ต้องแนบใบเสนอราคา ',
+        fromStageId: 1,
+        toStageId: 2,
+        conditionType: 'attachment',
+        conditionConfig: { minFiles: 2 },
+        documentTypeId: 3,
+      } as CreateWorkflowRuleDto);
+
+      expect(mockRulesRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ruleName: 'ต้องแนบใบเสนอราคา',
+          conditionConfig: {
+            minFiles: 2,
+            docType: 'quotation',
+          },
+          documentTypeId: 3,
+        }),
+      );
+    });
+
+    it('leaves the type empty for generic attachment rules', async () => {
+      await service.create({
+        ruleName: 'ต้องแนบไฟล์',
+        fromStageId: 1,
+        toStageId: 2,
+        conditionType: 'attachment',
+        conditionConfig: { minFiles: 1 },
+      } as CreateWorkflowRuleDto);
+
+      expect(
+        mockDocumentTypesRepository.findOne,
+      ).not.toHaveBeenCalled();
+      expect(mockRulesRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conditionConfig: { minFiles: 1 },
+          documentTypeId: null,
+        }),
+      );
+    });
+  });
+
+  describe('update', () => {
+    const typedAttachmentRule = {
+      id: 31,
+      ruleName: 'ต้องแนบใบเสนอราคา',
+      fromStageId: 1,
+      toStageId: 2,
+      conditionType: 'attachment',
+      conditionConfig: {
+        minFiles: 1,
+        docType: 'quotation',
+      },
+      documentTypeId: 3,
+      isRequired: true,
+      isActive: true,
+    };
+
+    beforeEach(() => {
+      mockRulesRepository.findOne.mockResolvedValue({
+        ...typedAttachmentRule,
+      });
+      mockStagesRepository.find.mockResolvedValue([
+        { id: 1 },
+        { id: 2 },
+      ]);
+      mockRulesRepository.save.mockImplementation(
+        (payload: unknown) => payload,
+      );
+      mockDocumentTypesRepository.findOne.mockResolvedValue({
+        id: 3,
+        documentType: 'quotation',
+      });
+    });
+
+    /*
+     * อัปเดตเฉพาะ config (ไม่แตะ conditionType/documentTypeId)
+     * -> คงประเภทเดิมไว้ ห้ามล้างเงียบ ๆ
+     */
+    it('keeps the existing type when only conditionConfig changes', async () => {
+      await service.update(31, {
+        conditionConfig: { minFiles: 5 },
+      } as UpdateWorkflowRuleDto);
+
+      expect(mockRulesRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentTypeId: 3,
+          conditionConfig: {
+            minFiles: 5,
+            docType: 'quotation',
+          },
+        }),
+      );
+    });
+
+    /*
+     * ส่ง conditionType + config ที่ไม่มี docType
+     * = ตั้งใจล้างประเภท -> กลับเป็น rule นับรวมทุกประเภท
+     */
+    it('clears the type when attachment is saved without one', async () => {
+      await service.update(31, {
+        conditionType: 'attachment',
+        conditionConfig: { minFiles: 5 },
+      } as UpdateWorkflowRuleDto);
+
+      expect(mockRulesRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentTypeId: null,
+          conditionConfig: { minFiles: 5 },
+        }),
+      );
     });
   });
 });
